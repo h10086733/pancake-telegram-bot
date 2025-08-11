@@ -1,0 +1,322 @@
+{
+  "trades": [
+    {
+      "id": "1754898871475",
+      "type": "BUY",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "bnbAmount": 0.05,
+      "tokenAmount": 50,
+      "bnbPrice": 2.5,
+      "gasUsed": 10500,
+      "timestamp": "2025-08-11T07:54:31.475Z",
+      "txHash": "0x1234567890abcdef1234567890abcdef12345678",
+      "status": "SOLD"
+    },
+    {
+      "id": "1754898871477",
+      "type": "BUY",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "bnbAmount": 0.2,
+      "tokenAmount": 80,
+      "bnbPrice": 3,
+      "gasUsed": 21000,
+      "timestamp": "2025-08-11T07:54:31.477Z",
+      "txHash": "0x2345678901bcdef12345678901cdef1234567890",
+      "status": "SOLD"
+    },
+    {
+      "id": "1754898871482",
+      "type": "SELL",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "tokenAmount": 50,
+      "bnbReceived": 0.15,
+      "bnbPrice": 3.2,
+      "gasUsed": 35500,
+      "timestamp": "2025-08-11T07:54:31.482Z",
+      "txHash": "0x3456789012cdef123456789012def12345678901",
+      "totalCost": 0.05,
+      "profit": 0.09999999999999999,
+      "profitPercentage": 199.99999999999997,
+      "buyTradesUsed": [
+        {
+          "id": "1754898871475",
+          "tokensUsed": 50,
+          "costUsed": 0.05,
+          "gasUsed": 10500
+        }
+      ]
+    },
+    {
+      "id": "1754898871484",
+      "type": "SELL",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "tokenAmount": 130,
+      "bnbReceived": 0.35,
+      "bnbPrice": 2.8,
+      "gasUsed": 56500,
+      "timestamp": "2025-08-11T07:54:31.484Z",
+      "txHash": "0x4567890123def1234567890123ef123456789012",
+      "totalCost": 0.25,
+      "profit": 0.09999999999999998,
+      "profitPercentage": 39.99999999999999,
+      "buyTradesUsed": [
+        {
+          "id": "1754898871475",
+          "tokensUsed": 50,
+          "costUsed": 0.05,
+          "gasUsed": 10500
+        },
+        {
+          "id": "1754898871477",
+          "tokensUsed": 80,
+          "costUsed": 0.2,
+          "gasUsed": 21000
+        }
+      ]
+    },
+    {
+      "id": "1754898888036",
+      "type": "BUY",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "bnbAmount": 0.05,
+      "tokenAmount": 50,
+      "bnbPrice": 2.5,
+      "gasUsed": 10500,
+      "timestamp": "2025-08-11T07:54:48.036Z",
+      "txHash": "0x1234567890abcdef1234567890abcdef12345678",
+      "status": "SOLD"
+    },
+    {
+      "id": "1754898888037",
+      "type": "BUY",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "bnbAmount": 0.2,
+      "tokenAmount": 80,
+      "bnbPrice": 3,
+      "gasUsed": 21000,
+      "timestamp": "2025-08-11T07:54:48.037Z",
+      "txHash": "0x2345678901bcdef12345678901cdef1234567890",
+      "status": "SOLD"
+    },
+    {
+      "id": "1754898888039",
+      "type": "SELL",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "tokenAmount": 50,
+      "bnbReceived": 0.15,
+      "bnbPrice": 3.2,
+      "gasUsed": 35500,
+      "timestamp": "2025-08-11T07:54:48.039Z",
+      "txHash": "0x3456789012cdef123456789012def12345678901",
+      "totalCost": 0.05,
+      "profit": 0.09999999999999999,
+      "profitPercentage": 199.99999999999997,
+      "buyTradesUsed": [
+        {
+          "id": "1754898888036",
+          "tokensUsed": 50,
+          "costUsed": 0.05,
+          "gasUsed": 10500
+        }
+      ]
+    },
+    {
+      "id": "1754898888040",
+      "type": "SELL",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "tokenAmount": 130,
+      "bnbReceived": 0.35,
+      "bnbPrice": 2.8,
+      "gasUsed": 56500,
+      "timestamp": "2025-08-11T07:54:48.040Z",
+      "txHash": "0x4567890123def1234567890123ef123456789012",
+      "totalCost": 0.25,
+      "profit": 0.09999999999999998,
+      "profitPercentage": 39.99999999999999,
+      "buyTradesUsed": [
+        {
+          "id": "1754898888036",
+          "tokensUsed": 50,
+          "costUsed": 0.05,
+          "gasUsed": 10500
+        },
+        {
+          "id": "1754898888037",
+          "tokensUsed": 80,
+          "costUsed": 0.2,
+          "gasUsed": 21000
+        }
+      ]
+    },
+    {
+      "id": "1754898970628",
+      "type": "BUY",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "bnbAmount": 0.05,
+      "tokenAmount": 50,
+      "bnbPrice": 2.5,
+      "gasUsed": 10500,
+      "timestamp": "2025-08-11T07:56:10.628Z",
+      "txHash": "0x1234567890abcdef1234567890abcdef12345678",
+      "status": "SOLD"
+    },
+    {
+      "id": "1754898970630",
+      "type": "BUY",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "bnbAmount": 0.2,
+      "tokenAmount": 80,
+      "bnbPrice": 3,
+      "gasUsed": 21000,
+      "timestamp": "2025-08-11T07:56:10.630Z",
+      "txHash": "0x2345678901bcdef12345678901cdef1234567890",
+      "status": "SOLD"
+    },
+    {
+      "id": "1754898970632",
+      "type": "SELL",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "tokenAmount": 50,
+      "bnbReceived": 0.15,
+      "bnbPrice": 3.2,
+      "gasUsed": 35500,
+      "timestamp": "2025-08-11T07:56:10.633Z",
+      "txHash": "0x3456789012cdef123456789012def12345678901",
+      "totalCost": 0.05,
+      "profit": 0.09999999999999999,
+      "profitPercentage": 199.99999999999997,
+      "buyTradesUsed": [
+        {
+          "id": "1754898970628",
+          "tokensUsed": 50,
+          "costUsed": 0.05,
+          "gasUsed": 10500
+        }
+      ]
+    },
+    {
+      "id": "1754898970634",
+      "type": "SELL",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "tokenAmount": 130,
+      "bnbReceived": 0.35,
+      "bnbPrice": 2.8,
+      "gasUsed": 56500,
+      "timestamp": "2025-08-11T07:56:10.634Z",
+      "txHash": "0x4567890123def1234567890123ef123456789012",
+      "totalCost": 0.25,
+      "profit": 0.09999999999999998,
+      "profitPercentage": 39.99999999999999,
+      "buyTradesUsed": [
+        {
+          "id": "1754898970628",
+          "tokensUsed": 50,
+          "costUsed": 0.05,
+          "gasUsed": 10500
+        },
+        {
+          "id": "1754898970630",
+          "tokensUsed": 80,
+          "costUsed": 0.2,
+          "gasUsed": 21000
+        }
+      ]
+    },
+    {
+      "id": "1754899027259",
+      "type": "BUY",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "bnbAmount": 0.05,
+      "tokenAmount": 50,
+      "bnbPrice": 2.5,
+      "gasUsed": 10500,
+      "timestamp": "2025-08-11T07:57:07.259Z",
+      "txHash": "0xbuy11989822153b",
+      "status": "SOLD"
+    },
+    {
+      "id": "1754899027259",
+      "type": "BUY",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "bnbAmount": 0.2,
+      "tokenAmount": 66.67,
+      "bnbPrice": 3,
+      "gasUsed": 21000,
+      "timestamp": "2025-08-11T07:57:07.259Z",
+      "txHash": "0xbuy21989822153b",
+      "status": "SOLD"
+    },
+    {
+      "id": "1754899027260",
+      "type": "SELL",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "tokenAmount": 50,
+      "bnbReceived": 0.14,
+      "bnbPrice": 3.5,
+      "gasUsed": 35500,
+      "timestamp": "2025-08-11T07:57:07.260Z",
+      "txHash": "0xsell11989822153c",
+      "totalCost": 0.05,
+      "profit": 0.09000000000000001,
+      "profitPercentage": 180,
+      "buyTradesUsed": [
+        {
+          "id": "1754899027259",
+          "tokensUsed": 50,
+          "costUsed": 0.05,
+          "gasUsed": 10500
+        }
+      ]
+    },
+    {
+      "id": "1754899027260",
+      "type": "SELL",
+      "tokenAddress": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+      "tokenSymbol": "CAKE",
+      "tokenAmount": 116.67,
+      "bnbReceived": 0.22,
+      "bnbPrice": 2.2,
+      "gasUsed": 56500,
+      "timestamp": "2025-08-11T07:57:07.260Z",
+      "txHash": "0xsell21989822153c",
+      "totalCost": 0.25,
+      "profit": -0.03,
+      "profitPercentage": -12,
+      "buyTradesUsed": [
+        {
+          "id": "1754899027259",
+          "tokensUsed": 50,
+          "costUsed": 0.05,
+          "gasUsed": 10500
+        },
+        {
+          "id": "1754899027259",
+          "tokensUsed": 66.67,
+          "costUsed": 0.2,
+          "gasUsed": 21000
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "totalTrades": 16,
+    "totalProfit": 0.6899999999999998,
+    "totalLoss": 0.03,
+    "winRate": 87.5
+  }
+}

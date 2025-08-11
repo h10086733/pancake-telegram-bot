@@ -594,8 +594,6 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
 
 💰 *余额信息:*
 • BNB: ${parseFloat(balance.bnb).toFixed(6)} BNB
-• USDT: ${parseFloat(balance.usdt).toFixed(2)} USDT
-• CAKE: ${parseFloat(balance.cake).toFixed(4)} CAKE
       `;
 
       await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
@@ -716,6 +714,12 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
         break;
       case 'refresh_holdings':
         await this.handleHoldings({ chat: { id: chatId } });
+        break;
+      case 'trading_stats':
+        await this.handleTradingStats({ chat: { id: chatId } });
+        break;
+      case 'trading_history':
+        await this.handleTradingHistory({ chat: { id: chatId } });
         break;
       case 'wallet':
         await this.handleWallet({ chat: { id: chatId } });
@@ -924,8 +928,7 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
 ⚡ *快速操作菜单*
 
 💼 *当前钱包状态：*
-• BNB: ${parseFloat(balance.bnb).toFixed(4)} BNB
-• USDT: ${parseFloat(balance.usdt).toFixed(2)} USDT
+• BNB: ${parseFloat(balance.bnb || 0).toFixed(4)} BNB
 
 ⚙️ *当前设置：*
 • 滑点: ${this.tradeManager.settings.slippage}%
@@ -1022,9 +1025,7 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
 👤 地址: \`${balance.address}\`
 
 💰 *详细余额信息:*
-• BNB: ${parseFloat(balance.bnb).toFixed(6)} BNB
-• USDT: ${parseFloat(balance.usdt).toFixed(2)} USDT  
-• CAKE: ${parseFloat(balance.cake).toFixed(4)} CAKE
+• BNB: ${parseFloat(balance.bnb || 0).toFixed(6)} BNB
 
 ⚙️ *当前设置:*
 • 滑点: ${this.tradeManager.settings.slippage}%
@@ -1104,10 +1105,11 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
 
   async handleHoldings(msg) {
     const chatId = msg.chat.id;
-    const loadingMsg = await this.bot.sendMessage(chatId, '📊 正在扫描代币持仓，请稍候...');
+    const loadingMsg = await this.bot.sendMessage(chatId, '📊 正在扫描代币持仓和交易记录，请稍候...');
 
     try {
       const holdings = await this.tradeManager.getTokenHoldings();
+      const stats = this.tradeManager.getTradingStats();
       
       await this.bot.deleteMessage(chatId, loadingMsg.message_id);
 
@@ -1115,8 +1117,26 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
         return this.bot.sendMessage(chatId, `❌ 获取持仓失败: ${holdings.error}`);
       }
 
+      // 先显示交易统计
+      let message = `📊 *交易统计概览*
+
+`;
+
+      if (stats) {
+        const netProfitEmoji = stats.netProfit >= 0 ? '📈' : '📉';
+        const netProfitSign = stats.netProfit >= 0 ? '+' : '';
+        
+        message += `🎯 总交易数: ${stats.totalTrades} 次\n`;
+        message += `🛒 买入: ${stats.buyTrades} 次 | 💸 卖出: ${stats.sellTrades} 次\n`;
+        message += `${netProfitEmoji} 净利润: ${netProfitSign}${stats.netProfit.toFixed(6)} BNB\n`;
+        message += `📈 总盈利: +${stats.totalProfit.toFixed(6)} BNB\n`;
+        message += `📉 总亏损: -${stats.totalLoss.toFixed(6)} BNB\n`;
+        message += `🎯 胜率: ${stats.winRate.toFixed(1)}%\n`;
+        message += `💼 持仓中: ${stats.holdingTokens} 个代币\n\n`;
+      }
+
       if (holdings.tokens.length <= 1) { // 只有BNB
-        const message = holdings.fromTradingHistory ? 
+        message += holdings.fromTradingHistory ? 
           `📭 *代币持仓为空*
 
 🔍 已扫描 ${holdings.scannedTokens} 个交易记录中的代币
@@ -1136,8 +1156,7 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
         return this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
       }
 
-      let message = `
-📊 *代币持仓列表* ${holdings.fromTradingHistory ? '(基于交易记录)' : ''}
+      message += `📊 *代币持仓列表* ${holdings.fromTradingHistory ? '(基于交易记录)' : ''}
 
 👤 钱包: \`${this.tradeManager.wallet.address}\`
 💵 总价值: $${holdings.totalValueUSD} USD
@@ -1160,8 +1179,24 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
           message += `   价格: $${holding.priceUSD}\n`;
         }
         
-        // 添加代币地址（BNB除外）
+        // 添加持仓利润信息
         if (!holding.isNative && holding.address) {
+          const tokenHolding = this.tradeManager.getTokenPositionInfo(holding.address);
+          if (tokenHolding) {
+            message += `   📊 持仓: ${tokenHolding.totalTokens.toFixed(6)} 代币\n`;
+            message += `   💰 成本: ${tokenHolding.totalCost.toFixed(6)} BNB\n`;
+            message += `   📈 均价: ${tokenHolding.avgPrice.toFixed(8)} BNB/代币\n`;
+            
+            // 计算当前未实现盈亏
+            const currentValue = parseFloat(holding.balance) * tokenHolding.avgPrice;
+            const unrealizedPnL = currentValue - tokenHolding.totalCost;
+            const unrealizedPnLPercent = (unrealizedPnL / tokenHolding.totalCost) * 100;
+            const pnlEmoji = unrealizedPnL >= 0 ? '📈' : '📉';
+            const pnlSign = unrealizedPnL >= 0 ? '+' : '';
+            
+            message += `   ${pnlEmoji} 未实现: ${pnlSign}${unrealizedPnL.toFixed(6)} BNB (${pnlSign}${unrealizedPnLPercent.toFixed(2)}%)\n`;
+          }
+          
           message += `   地址: \`${holding.address}\`\n`;
           allAddresses.push(holding.address);
         }
@@ -1173,6 +1208,10 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
         [
           { text: '🔄 刷新持仓', callback_data: 'refresh_holdings' },
           { text: '💰 钱包余额', callback_data: 'balance' }
+        ],
+        [
+          { text: '📈 交易统计', callback_data: 'trading_stats' },
+          { text: '📋 交易历史', callback_data: 'trading_history' }
         ]
       ];
 
@@ -1342,17 +1381,159 @@ ${addressText}
     }
   }
 
-  // 启动方法
+  /**
+   * 处理交易统计
+   */
+  async handleTradingStats(msg) {
+    const chatId = msg.chat.id;
+    
+    try {
+      const stats = this.tradeManager.getTradingStats();
+      
+      if (!stats || stats.totalTrades === 0) {
+        return this.bot.sendMessage(chatId, `📊 *交易统计*
+
+🔍 暂无交易记录
+
+💡 *提示：* 完成第一笔交易后，统计数据将会显示在这里`, { parse_mode: 'Markdown' });
+      }
+      
+      const netProfitEmoji = stats.netProfit >= 0 ? '📈' : '📉';
+      const netProfitSign = stats.netProfit >= 0 ? '+' : '';
+      const winRateEmoji = stats.winRate >= 50 ? '🎯' : '🎲';
+      
+      const message = `📊 *详细交易统计*
+
+🎯 *总体表现*
+• 总交易数: ${stats.totalTrades} 次
+• 买入交易: ${stats.buyTrades} 次
+• 卖出交易: ${stats.sellTrades} 次
+• 持仓代币: ${stats.holdingTokens} 个
+
+💰 *盈亏情况*
+• ${netProfitEmoji} 净利润: ${netProfitSign}${stats.netProfit.toFixed(6)} BNB
+• 📈 总盈利: +${stats.totalProfit.toFixed(6)} BNB
+• 📉 总亏损: -${stats.totalLoss.toFixed(6)} BNB
+• ${winRateEmoji} 胜率: ${stats.winRate.toFixed(1)}%
+
+📋 *交易效率*
+• 平均每笔盈利: +${(stats.totalProfit / Math.max(stats.sellTrades, 1)).toFixed(6)} BNB
+• 平均每笔亏损: -${(stats.totalLoss / Math.max(stats.sellTrades, 1)).toFixed(6)} BNB
+• 盈亏比: ${stats.totalLoss > 0 ? (stats.totalProfit / stats.totalLoss).toFixed(2) : 'N/A'}
+`;
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: '📋 查看交易历史', callback_data: 'trading_history' },
+            { text: '📊 查看持仓', callback_data: 'holdings' }
+          ],
+          [
+            { text: '🔄 刷新统计', callback_data: 'trading_stats' },
+            { text: '🎮 返回主菜单', callback_data: 'main_menu' }
+          ]
+        ]
+      };
+
+      return this.bot.sendMessage(chatId, message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      });
+      
+    } catch (error) {
+      console.error('获取交易统计失败:', error);
+      return this.bot.sendMessage(chatId, `❌ 获取交易统计失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 处理交易历史
+   */
+  async handleTradingHistory(msg) {
+    const chatId = msg.chat.id;
+    
+    try {
+      const history = this.tradeManager.getTradingHistory();
+      
+      if (!history || history.trades.length === 0) {
+        return this.bot.sendMessage(chatId, `📋 *交易历史*
+
+🔍 暂无交易记录
+
+💡 *提示：* 完成第一笔交易后，历史记录将会显示在这里`, { parse_mode: 'Markdown' });
+      }
+      
+      // 按时间倒序排序，显示最近的交易
+      const recentTrades = history.trades
+        .slice()
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        .slice(0, 10); // 只显示最近10笔交易
+      
+      let message = `📋 *交易历史* (最近10笔)
+
+`;
+
+      recentTrades.forEach((trade, index) => {
+        const date = new Date(trade.timestamp).toLocaleString('zh-CN', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        if (trade.type === 'BUY') {
+          message += `🛒 *买入 ${trade.tokenSymbol}*\n`;
+          message += `   💰 花费: ${trade.bnbAmount.toFixed(6)} BNB\n`;
+          message += `   🪙 获得: ${trade.tokenAmount.toFixed(6)} ${trade.tokenSymbol}\n`;
+          message += `   📅 时间: ${date}\n`;
+          message += `   📊 状态: ${trade.status === 'HOLDING' ? '持仓中' : '已卖出'}\n`;
+        } else if (trade.type === 'SELL') {
+          const profitEmoji = trade.profit >= 0 ? '📈' : '📉';
+          const profitSign = trade.profit >= 0 ? '+' : '';
+          
+          message += `💸 *卖出 ${trade.tokenSymbol}*\n`;
+          message += `   🪙 卖出: ${trade.tokenAmount.toFixed(6)} ${trade.tokenSymbol}\n`;
+          message += `   💰 获得: ${trade.bnbReceived.toFixed(6)} BNB\n`;
+          message += `   💵 成本: ${trade.totalCost.toFixed(6)} BNB\n`;
+          message += `   ${profitEmoji} 利润: ${profitSign}${trade.profit.toFixed(6)} BNB (${profitSign}${trade.profitPercentage.toFixed(2)}%)\n`;
+          message += `   📅 时间: ${date}\n`;
+        }
+        
+        message += `   🔗 [查看交易](https://bscscan.com/tx/${trade.txHash})\n\n`;
+      });
+
+      if (history.trades.length > 10) {
+        message += `📝 *提示：* 显示最近10笔交易，总共${history.trades.length}笔记录`;
+      }
+
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: '📊 查看统计', callback_data: 'trading_stats' },
+            { text: '📊 查看持仓', callback_data: 'holdings' }
+          ],
+          [
+            { text: '🔄 刷新历史', callback_data: 'trading_history' },
+            { text: '🎮 返回主菜单', callback_data: 'main_menu' }
+          ]
+        ]
+      };
+
+      return this.bot.sendMessage(chatId, message, { 
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+        disable_web_page_preview: true
+      });
+      
+    } catch (error) {
+      console.error('获取交易历史失败:', error);
+      return this.bot.sendMessage(chatId, `❌ 获取交易历史失败: ${error.message}`);
+    }
+  }
+
   start() {
     console.log('🤖 PancakeSwap 智能交易机器人已启动...');
     logger.info('Telegram bot started');
-  }
-
-  // 停止方法
-  stop() {
-    console.log('🛑 停止机器人...');
-    this.bot.stopPolling();
-    logger.info('Telegram bot stopped');
   }
 }
 

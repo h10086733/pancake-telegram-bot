@@ -12,15 +12,16 @@
     "bot-info": "node get-bot-info.js"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.64.0",
-    "ethers": "^6.7.1",
     "axios": "^1.5.0",
     "dotenv": "^16.3.1",
+    "ethers": "^6.7.1",
     "express": "^4.18.2",
-    "qrcode": "^1.5.3",
+    "moment": "^2.29.4",
     "node-cron": "^3.0.2",
-    "winston": "^3.10.0",
-    "moment": "^2.29.4"
+    "node-telegram-bot-api": "^0.64.0",
+    "qrcode": "^1.5.3",
+    "twitter-api-v2": "^1.24.0",
+    "winston": "^3.10.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

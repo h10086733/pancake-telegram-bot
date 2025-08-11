@@ -30,6 +30,14 @@ module.exports = {
   BSCSCAN_API_KEY: process.env.BSCSCAN_API_KEY,
   COINGECKO_API_KEY: process.env.COINGECKO_API_KEY,
   
+  // Twitter API Keys
+  TWITTER_API_KEY: process.env.TWITTER_API_KEY,
+  TWITTER_API_SECRET: process.env.TWITTER_API_SECRET,
+  TWITTER_ACCESS_TOKEN: process.env.TWITTER_ACCESS_TOKEN,
+  TWITTER_ACCESS_SECRET: process.env.TWITTER_ACCESS_SECRET,
+  TWITTER_BEARER_TOKEN: process.env.TWITTER_BEARER_TOKEN,
+  ENABLE_TWITTER: process.env.ENABLE_TWITTER === 'true',
+  
   // Common Token Addresses
   TOKENS: {
     WBNB: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
