@@ -1,0 +1,38 @@
+{
+  "name": "pancake-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram Bot for PancakeSwap Trading with Custom Router",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "node src/test.js",
+    "setup": "node src/setup.js",
+    "check-config": "node check-config.js",
+    "bot-info": "node get-bot-info.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "ethers": "^6.7.1",
+    "axios": "^1.5.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "qrcode": "^1.5.3",
+    "node-cron": "^3.0.2",
+    "winston": "^3.10.0",
+    "moment": "^2.29.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "pancakeswap",
+    "trading",
+    "defi",
+    "bsc"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
