@@ -127,6 +127,7 @@ class PancakeTelegramBot {
       { command: 'balance', description: '👛 查看钱包余额' },
       { command: 'holdings', description: '📊 查看代币持仓' },
       { command: 'price', description: '📈 查询代币价格' },
+      { command: 'compare', description: '🔍 比较V2/V3价格' },
       { command: 'addtoken', description: '➕ 添加代币监控' },
       { command: 'menu', description: '🎮 显示主菜单' },
       { command: 'quick', description: '⚡ 快速操作' },
@@ -151,12 +152,13 @@ class PancakeTelegramBot {
     
     // 智能交易命令 - 自动选择最佳版本
     this.bot.onText(/\/buy$/, (msg) => this.handleBuyCommand(msg, null));
-    this.bot.onText(/\/buy (.+)(?: (.+))?/, (msg, match) => this.handleBuyCommand(msg, match));
+    this.bot.onText(/\/buy (\S+)(?: (\S+))?/, (msg, match) => this.handleBuyCommand(msg, match));
     this.bot.onText(/\/sell$/, (msg) => this.handleSellCommand(msg, null));
-    this.bot.onText(/\/sell (.+)(?: (.+))?/, (msg, match) => this.handleSellCommand(msg, match));
+    this.bot.onText(/\/sell (\S+)(?: (\S+))?/, (msg, match) => this.handleSellCommand(msg, match));
     
     // 价格和分析命令
     this.bot.onText(/\/price (.+)/, (msg, match) => this.handlePriceCommand(msg, match));
+    this.bot.onText(/\/compare (.+)/, (msg, match) => this.handleCompareCommand(msg, match));
     
     // 钱包命令
     this.bot.onText(/\/balance/, (msg) => this.handleBalance(msg));
@@ -251,6 +253,7 @@ class PancakeTelegramBot {
 
 *📊 查询命令：*
 • \`/price <代币地址>\` - 查询代币价格
+• \`/compare <代币地址>\` - 比较V2/V3价格和最优路由
 • \`/balance\` - 查看钱包余额
 • \`/holdings\` - 查看代币持仓列表 (基于交易记录)
 
@@ -308,10 +311,13 @@ class PancakeTelegramBot {
         ],
         [
           { text: '📈 价格查询', callback_data: 'price_query' },
-          { text: '⚡ 快速菜单', callback_data: 'quick_menu' }
+          { text: '🔍 价格比较', callback_data: 'price_compare' }
         ],
         [
-          { text: '🧠 智能买入', callback_data: 'smart_buy' },
+          { text: '⚡ 快速菜单', callback_data: 'quick_menu' },
+          { text: '🧠 智能买入', callback_data: 'smart_buy' }
+        ],
+        [
           { text: '💸 智能卖出', callback_data: 'smart_sell' }
         ],
         [
@@ -570,10 +576,10 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
   }
 
   async handleSmartBuy(chatId, tokenAddress, bnbAmount) {
-    const progressMsg = await this.bot.sendMessage(chatId, '🧠 智能分析最优交换路径...');
+    const progressMsg = await this.bot.sendMessage(chatId, '🧠 正在比较 V2/V3 价格，寻找最优路径...');
 
     try {
-      const result = await this.tradeManager.smartBuy(tokenAddress, bnbAmount);
+      const result = await this.tradeManager.smartBuyOptimal(tokenAddress, bnbAmount);
       
       await this.bot.deleteMessage(chatId, progressMsg.message_id);
       return result;
@@ -588,10 +594,10 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
   }
 
   async handleSmartSell(chatId, tokenAddress, tokenAmount) {
-    const progressMsg = await this.bot.sendMessage(chatId, '🧠 智能分析最优交换路径...');
+    const progressMsg = await this.bot.sendMessage(chatId, '🧠 正在比较 V2/V3 价格，寻找最优路径...');
 
     try {
-      const result = await this.tradeManager.smartSell(tokenAddress, tokenAmount);
+      const result = await this.tradeManager.smartSellOptimal(tokenAddress, tokenAmount);
       
       await this.bot.deleteMessage(chatId, progressMsg.message_id);
       return result;
@@ -641,6 +647,68 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
         await this.bot.deleteMessage(chatId, loadingMsg.message_id);
       } catch (e) {}
       await this.bot.sendMessage(chatId, '❌ 获取价格时发生错误');
+    }
+  }
+
+  async handleCompareCommand(msg, match) {
+    const chatId = msg.chat.id;
+    const tokenAddress = match[1];
+
+    if (!this.isValidAddress(tokenAddress)) {
+      return this.bot.sendMessage(chatId, '❌ 无效的地址格式');
+    }
+
+    const loadingMsg = await this.bot.sendMessage(chatId, '🔍 正在比较V2和V3价格...');
+
+    try {
+      // 获取最优价格信息 (买入)
+      const buyPriceInfo = await this.tradeManager.getOptimalPrice(tokenAddress, 0.001, true);
+      // 获取最优价格信息 (卖出)  
+      const sellPriceInfo = await this.tradeManager.getOptimalPrice(tokenAddress, 1000, false);
+      
+      await this.bot.deleteMessage(chatId, loadingMsg.message_id);
+
+      if (buyPriceInfo.success && sellPriceInfo.success) {
+        const buyComparison = buyPriceInfo.priceComparison.map(p => 
+          `${p.isBest ? '🏆' : '📊'} ${p.version}: ${parseFloat(p.price).toFixed(6)}`
+        ).join('\n');
+        
+        const sellComparison = sellPriceInfo.priceComparison.map(p => 
+          `${p.isBest ? '🏆' : '📊'} ${p.version}: ${parseFloat(p.price).toFixed(6)}`
+        ).join('\n');
+
+        const message = `
+🔍 *V2/V3 价格比较*
+
+🪙 代币: \`${tokenAddress}\`
+🏷️ 符号: ${buyPriceInfo.symbol}
+
+💰 *买入价格比较* (0.001 BNB → 代币):
+${buyComparison}
+📈 最优提升: ${buyPriceInfo.improvement}
+
+💸 *卖出价格比较* (1000 代币 → BNB):
+${sellComparison}  
+📈 最优提升: ${sellPriceInfo.improvement}
+
+🧠 *智能选择:*
+• 买入最优: ${buyPriceInfo.bestRoute.version.toUpperCase()}${buyPriceInfo.bestRoute.fee ? ` (${buyPriceInfo.bestRoute.fee/10000}%)` : ''}
+• 卖出最优: ${sellPriceInfo.bestRoute.version.toUpperCase()}${sellPriceInfo.bestRoute.fee ? ` (${sellPriceInfo.bestRoute.fee/10000}%)` : ''}
+
+💡 使用 /buy 或 /sell 命令将自动选择最优路由
+        `;
+        await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+      } else {
+        const error = buyPriceInfo.error || sellPriceInfo.error || '未知错误';
+        await this.bot.sendMessage(chatId, `❌ 价格比较失败: ${error}`);
+      }
+
+    } catch (error) {
+      logger.error('Compare command error:', error);
+      try {
+        await this.bot.deleteMessage(chatId, loadingMsg.message_id);
+      } catch (e) {}
+      await this.bot.sendMessage(chatId, '❌ 价格比较时发生错误');
     }
   }
 
@@ -798,6 +866,9 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
         break;
       case 'price_query':
         await this.bot.sendMessage(chatId, '📊 请输入代币地址查询价格，或使用命令 /price <代币地址>');
+        break;
+      case 'price_compare':
+        await this.bot.sendMessage(chatId, '🔍 请输入代币地址比较V2/V3价格，或使用命令 /compare <代币地址>');
         break;
       case 'smart_buy':
         await this.bot.sendMessage(chatId, '🧠 请使用命令 /buy <代币地址> <BNB数量> 进行智能购买');

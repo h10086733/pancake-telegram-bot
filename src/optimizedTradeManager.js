@@ -52,9 +52,9 @@ class OptimizedTradeManager {
     };
     
     // 交易相关配置
-    this.defaultBuyAmount = config.DEFAULT_BUY_AMOUNT || 0.05;
-    this.maxTradeAmount = config.MAX_TRADE_AMOUNT || 1.0;
-    this.defaultSellPercentage = config.DEFAULT_SELL_PERCENTAGE || 100;
+    this.defaultBuyAmount = config.DEFAULT_BUY_AMOUNT
+    this.maxTradeAmount = config.MAX_TRADE_AMOUNT ;
+    this.defaultSellPercentage = config.DEFAULT_SELL_PERCENTAGE;
     // settings扩展
     this.settings.defaultBuyAmount = this.defaultBuyAmount;
     this.settings.maxTradeAmount = this.maxTradeAmount;
@@ -116,7 +116,17 @@ class OptimizedTradeManager {
   getTradingHistory() {
     try {
       const data = fs.readFileSync(this.tradingHistoryFile, 'utf8');
-      return JSON.parse(data);
+      const history = JSON.parse(data);
+      
+      // 确保数据结构完整
+      if (!history.summary) {
+        history.summary = { totalTrades: 0, totalProfit: 0, totalLoss: 0, winRate: 0 };
+      }
+      if (!history.trades) {
+        history.trades = [];
+      }
+      
+      return history;
     } catch (error) {
       return {
         trades: [],
@@ -131,6 +141,10 @@ class OptimizedTradeManager {
   recordBuyTrade(tokenAddress, tokenSymbol, bnbAmount, tokenAmount, bnbPrice, gasUsed, txHash) {
     try {
       const history = this.getTradingHistory();
+      console.log('🔍 调试 - history对象:', JSON.stringify(history, null, 2));
+      console.log('🔍 调试 - history.summary:', history.summary);
+      console.log('🔍 调试 - history.trades:', history.trades);
+      
       const buyTrade = {
         id: Date.now().toString(),
         type: 'BUY',
@@ -560,7 +574,7 @@ class OptimizedTradeManager {
       // 验证和格式化BNB数量
       const bnbAmountNum = parseFloat(bnbAmount);
       if (isNaN(bnbAmountNum) || bnbAmountNum <= 0) {
-        return { success: false, error: '无效的BNB数量' };
+        return { success: false, error: '❌ 无效的BNB数量' };
       }
       
       // 更新Gas价格
@@ -568,7 +582,13 @@ class OptimizedTradeManager {
       
       const isValid = await this.isValidTokenAddress(tokenAddress);
       if (!isValid) {
-        return { success: false, error: '无效的代币地址' };
+        return { success: false, error: '❌ 无效的代币地址' };
+      }
+
+      // 预先验证交易路径
+      const pathValidation = await this.validateTradingPath(tokenAddress, false);
+      if (!pathValidation.valid) {
+        return { success: false, error: `❌ ${pathValidation.error}` };
       }
 
       const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
@@ -603,25 +623,33 @@ class OptimizedTradeManager {
       if (receipt.status === 1) {
         this.addTradedToken(tokenAddress);
         
-        // 发送Twitter通知
-        try {
-          const priceInfo = await this.getTokenPrice(tokenAddress);
-          const priceUSD = priceInfo.success ? priceInfo.priceInUSD : null;
-          const tweetMessage = this.generateBuyTweet(symbol, bnbAmountNum, tx.hash, priceUSD);
-          await this.sendTweet(tweetMessage);
-        } catch (twitterError) {
-          console.log('Twitter通知发送失败:', twitterError.message);
-        }
+        // 记录交易历史
+        this.recordBuyTrade(tokenAddress, symbol, bnbAmountNum, ethers.formatUnits(amounts[1], decimals), '1.0', receipt.gasUsed.toString(), tx.hash);
         
-        // 记录买入交易
-        const priceInfo = await this.getTokenPrice(tokenAddress).catch(() => ({ success: false }));
-        const bnbPrice = priceInfo.success ? priceInfo.priceInBNB : '0';
-        this.recordBuyTrade(tokenAddress, symbol, bnbAmountNum, ethers.formatUnits(amounts[1], decimals), bnbPrice, receipt.gasUsed.toString(), tx.hash);
+        // 发送Twitter通知
+        if (config.ENABLE_TWITTER) {
+          try {
+            const message = `🛒 买入成功!\n\n` +
+              `代币: ${symbol}\n` +
+              `数量: ${ethers.formatUnits(amounts[1], decimals)}\n` +
+              `花费: ${bnbAmountNum} BNB\n` +
+              `交易哈希: ${tx.hash}\n` +
+              `版本: PancakeSwap V2\n` +
+              `时间: ${new Date().toLocaleString()}`;
+            
+            await this.sendTweet(message);
+            console.log('📱 Twitter通知已发送');
+          } catch (error) {
+            console.error('Twitter通知发送失败:', error);
+          }
+        }
         
         return {
           success: true,
           txHash: tx.hash,
-          message: `成功买入 ${symbol}`,
+          message: `✅ 成功买入 ${symbol}`,
+          expectedAmount: ethers.formatUnits(amounts[1], decimals),
+          gasUsed: receipt.gasUsed.toString(),
           details: {
             amountIn: bnbAmountNum,
             expectedTokens: ethers.formatUnits(amounts[1], decimals),
@@ -630,11 +658,11 @@ class OptimizedTradeManager {
           }
         };
       } else {
-        return { success: false, error: '交易失败' };
+        return { success: false, error: '❌ 交易失败' };
       }
     } catch (error) {
       console.error('买入失败:', error);
-      return { success: false, error: `买入失败: ${error.reason || error.message}` };
+      return { success: false, error: this.parseContractError(error) };
     }
   }
 
@@ -646,7 +674,7 @@ class OptimizedTradeManager {
       // 验证和格式化BNB数量
       const bnbAmountNum = parseFloat(bnbAmount);
       if (isNaN(bnbAmountNum) || bnbAmountNum <= 0) {
-        return { success: false, error: '无效的BNB数量' };
+        return { success: false, error: '❌ 无效的BNB数量' };
       }
       
       // 更新Gas价格
@@ -654,7 +682,13 @@ class OptimizedTradeManager {
       
       const isValid = await this.isValidTokenAddress(tokenAddress);
       if (!isValid) {
-        return { success: false, error: '无效的代币地址' };
+        return { success: false, error: '❌ 无效的代币地址' };
+      }
+
+      // 预先验证V3交易路径
+      const pathValidation = await this.validateTradingPath(tokenAddress, true, fee);
+      if (!pathValidation.valid) {
+        return { success: false, error: `❌ ${pathValidation.error}` };
       }
 
       const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
@@ -697,36 +731,48 @@ class OptimizedTradeManager {
       if (receipt.status === 1) {
         this.addTradedToken(tokenAddress);
         
-        // 发送Twitter通知
-        try {
-          const priceInfo = await this.getTokenPriceV3(tokenAddress, fee);
-          const priceUSD = priceInfo.success ? priceInfo.priceInUSD : null;
-          const tweetMessage = this.generateBuyTweet(symbol, bnbAmount, tx.hash, priceUSD);
-          await this.sendTweet(tweetMessage);
-        } catch (twitterError) {
-          console.log('Twitter通知发送失败:', twitterError.message);
-        }
+        // 记录交易历史
+        this.recordBuyTrade(tokenAddress, symbol, bnbAmountNum, ethers.formatUnits(quoted, decimals), '1.0', receipt.gasUsed.toString(), tx.hash);
         
-        // 记录买入交易
-        this.recordBuyTrade(tokenAddress, symbol, bnbAmount, ethers.formatUnits(quoted, decimals), this.settings.gasPrice, receipt.gasUsed.toString(), tx.hash);
+        // 发送Twitter通知
+        if (config.ENABLE_TWITTER) {
+          try {
+            const message = `🛒 买入成功!\n\n` +
+              `代币: ${symbol}\n` +
+              `数量: ${ethers.formatUnits(quoted, decimals)}\n` +
+              `花费: ${bnbAmountNum} BNB\n` +
+              `交易哈希: ${tx.hash}\n` +
+              `版本: PancakeSwap V3 (${fee/10000}%)\n` +
+              `时间: ${new Date().toLocaleString()}`;
+            
+            await this.sendTweet(message);
+            console.log('📱 Twitter通知已发送');
+          } catch (error) {
+            console.error('Twitter通知发送失败:', error);
+          }
+        }
         
         return {
           success: true,
           txHash: tx.hash,
-          message: `成功V3买入 ${symbol}`,
+          message: `✅ 成功V3买入 ${symbol}`,
+          expectedAmount: ethers.formatUnits(quoted, decimals),
+          gasUsed: receipt.gasUsed.toString(),
+          fee: fee,
           details: {
-            amountIn: bnbAmount,
+            amountIn: bnbAmountNum,
             expectedTokens: ethers.formatUnits(quoted, decimals),
             slippage: this.settings.slippage,
-            gasUsed: receipt.gasUsed.toString()
+            gasUsed: receipt.gasUsed.toString(),
+            fee: fee
           }
         };
       } else {
-        return { success: false, error: '交易失败' };
+        return { success: false, error: '❌ 交易失败' };
       }
     } catch (error) {
       console.error('V3买入失败:', error);
-      return { success: false, error: `买入失败: ${error.reason || error.message}` };
+      return { success: false, error: this.parseContractError(error) };
     }
   }
 
@@ -742,7 +788,13 @@ class OptimizedTradeManager {
       
       const isValid = await this.isValidTokenAddress(tokenAddress);
       if (!isValid) {
-        return { success: false, error: '无效的代币地址' };
+        return { success: false, error: '❌ 无效的代币地址' };
+      }
+
+      // 预先验证交易路径
+      const pathValidation = await this.validateTradingPath(tokenAddress, false);
+      if (!pathValidation.valid) {
+        return { success: false, error: `❌ ${pathValidation.error}` };
       }
 
       const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
@@ -831,7 +883,7 @@ class OptimizedTradeManager {
       }
     } catch (error) {
       console.error('卖出失败:', error);
-      return { success: false, error: `卖出失败: ${error.reason || error.message}` };
+      return { success: false, error: this.parseContractError(error) };
     }
   }
 
@@ -845,7 +897,13 @@ class OptimizedTradeManager {
       
       const isValid = await this.isValidTokenAddress(tokenAddress);
       if (!isValid) {
-        return { success: false, error: '无效的代币地址' };
+        return { success: false, error: '❌ 无效的代币地址' };
+      }
+
+      // 预先验证V3交易路径
+      const pathValidation = await this.validateTradingPath(tokenAddress, true, fee);
+      if (!pathValidation.valid) {
+        return { success: false, error: `❌ ${pathValidation.error}` };
       }
 
       const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
@@ -937,7 +995,7 @@ class OptimizedTradeManager {
       }
     } catch (error) {
       console.error('V3卖出失败:', error);
-      return { success: false, error: `卖出失败: ${error.reason || error.message}` };
+      return { success: false, error: this.parseContractError(error) };
     }
   }
 
@@ -1165,18 +1223,6 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
   /**
    * 获取交易历史
    */
-  getTradingHistory() {
-    try {
-      const data = fs.readFileSync(this.tradingHistoryFile, 'utf8');
-      return JSON.parse(data);
-    } catch (error) {
-      return {
-        trades: [],
-        summary: { totalTrades: 0, totalProfit: 0, totalLoss: 0, winRate: 0 }
-      };
-    }
-  }
-
   /**
    * 添加交易记录
    */
@@ -1319,7 +1365,7 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
       }
     } catch (error) {
       console.error('卖出失败:', error);
-      return { success: false, error: `卖出失败: ${error.reason || error.message}` };
+      return { success: false, error: this.parseContractError(error) };
     }
   }
 
@@ -1410,6 +1456,669 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
     } catch (error) {
       console.error('代币数量解析错误:', error, 'amount:', amount, 'decimals:', decimals);
       throw new Error(`代币数量解析失败: ${amount}`);
+    }
+  }
+
+  /**
+   * 添加代币到已交易列表
+   */
+  addTradedToken(tokenAddress) {
+    try {
+      const tokens = this.getTradedTokens();
+      const normalizedAddress = tokenAddress.toLowerCase();
+      
+      if (!tokens.includes(normalizedAddress)) {
+        tokens.push(normalizedAddress);
+        fs.writeFileSync(this.tradedTokensFile, JSON.stringify({ tokens }, null, 2));
+        console.log(`✅ 代币已添加到交易列表: ${tokenAddress}`);
+      }
+    } catch (error) {
+      console.error('添加交易代币失败:', error);
+    }
+  }
+
+  /**
+   * 从已交易列表中移除代币
+   */
+  removeTradedToken(tokenAddress) {
+    try {
+      const tokens = this.getTradedTokens();
+      const normalizedAddress = tokenAddress.toLowerCase();
+      const index = tokens.indexOf(normalizedAddress);
+      
+      if (index > -1) {
+        tokens.splice(index, 1);
+        fs.writeFileSync(this.tradedTokensFile, JSON.stringify({ tokens }, null, 2));
+        console.log(`✅ 代币已从交易列表移除: ${tokenAddress}`);
+      }
+    } catch (error) {
+      console.error('移除交易代币失败:', error);
+    }
+  }
+
+  // 解析合约错误，提供用户友好的错误信息
+  parseContractError(error) {
+    const errorMessage = error.message || error.reason || '';
+    const errorCode = error.code || '';
+    
+    // 常见的PancakeSwap错误类型
+    if (errorMessage.includes('INSUFFICIENT_OUTPUT_AMOUNT') || errorMessage.includes('insufficient liquidity')) {
+      return '❌ 流动性不足或滑点过小，请增加滑点或稍后重试';
+    }
+    
+    if (errorMessage.includes('INSUFFICIENT_INPUT_AMOUNT')) {
+      return '❌ 输入金额不足，请检查您的余额';
+    }
+    
+    if (errorMessage.includes('INVALID_PATH') || errorMessage.includes('PancakeLibrary: INVALID_PATH')) {
+      return '❌ 无效的交易路径，该代币可能不存在流动性池';
+    }
+    
+    if (errorMessage.includes('EXPIRED')) {
+      return '❌ 交易已过期，请重试';
+    }
+    
+    if (errorMessage.includes('TRANSFER_FAILED') || errorMessage.includes('transfer failed')) {
+      return '❌ 代币转账失败，可能是代币合约限制';
+    }
+    
+    if (errorMessage.includes('execution reverted') && errorMessage.includes('require(false)')) {
+      return '❌ 交易被拒绝，可能是：\n• 代币地址无效\n• 没有流动性池\n• 代币有交易限制\n• 滑点设置过低';
+    }
+    
+    if (errorMessage.includes('insufficient funds') || errorMessage.includes('insufficient balance')) {
+      return '❌ 余额不足，请检查您的BNB余额';
+    }
+    
+    if (errorMessage.includes('gas required exceeds allowance') || errorMessage.includes('out of gas')) {
+      return '❌ Gas费用不足，请增加Gas限额或检查网络状况';
+    }
+    
+    if (errorMessage.includes('nonce too low') || errorMessage.includes('replacement transaction underpriced')) {
+      return '❌ 交易nonce错误，请等待上一笔交易确认';
+    }
+    
+    if (errorMessage.includes('network error') || errorMessage.includes('timeout')) {
+      return '❌ 网络连接问题，请检查网络状况后重试';
+    }
+    
+    // 如果是数值相关错误
+    if (errorMessage.includes('value out of range') || errorMessage.includes('numeric fault')) {
+      return '❌ 数值格式错误，请检查输入的金额';
+    }
+    
+    // 默认错误信息
+    return `❌ 交易失败: ${error.reason || error.message || '未知错误'}`;
+  }
+
+  // 验证交易路径是否有效
+  async validateTradingPath(tokenAddress, isV3 = false, fee = 2500) {
+    try {
+      const path = [config.WBNB_ADDRESS, tokenAddress];
+      const testAmount = ethers.parseEther('0.001'); // 测试用的小额
+      
+      if (isV3) {
+        // V3路径验证 - 检查池子是否存在
+        const poolContract = new ethers.Contract(
+          this.getV3PoolAddress(config.WBNB_ADDRESS, tokenAddress, fee),
+          [
+            "function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)"
+          ],
+          this.provider
+        );
+        
+        try {
+          await poolContract.slot0();
+          return { valid: true };
+        } catch (error) {
+          return { valid: false, error: `V3流动性池不存在 (费率${fee/10000}%)` };
+        }
+      } else {
+        // V2路径验证 - 增强版
+        try {
+          const amounts = await this.router.getAmountsOut(testAmount, path);
+          
+          // 检查输出是否合理（至少要有一些代币）
+          const outputAmount = amounts[1];
+          if (outputAmount <= 0n) {
+            return { valid: false, error: '代币输出为0，可能是诈骗代币' };
+          }
+          
+          // 检查是否是蜜罐或极低流动性代币
+          // 如果0.001 BNB只能换到极少的代币，那可能有问题
+          const ratio = Number(outputAmount) / Number(testAmount);
+          if (ratio < 0.0001) { // 如果比率太低，可能是问题代币
+            return { valid: false, error: '代币流动性极低或可能是蜜罐代币' };
+          }
+          
+          // 测试一个更大的金额，看看滑点是否合理
+          const largerTestAmount = ethers.parseEther('0.01'); // 0.01 BNB
+          try {
+            const largerAmounts = await this.router.getAmountsOut(largerTestAmount, path);
+            const largerRatio = Number(largerAmounts[1]) / Number(largerTestAmount);
+            
+            // 检查滑点是否过大（比小额测试的比率差太多）
+            const slippageRatio = Math.abs(ratio - largerRatio) / ratio;
+            if (slippageRatio > 0.5) { // 如果滑点超过50%，可能有问题
+              return { valid: false, error: '代币流动性不足，滑点过大' };
+            }
+          } catch (e) {
+            // 如果大额测试失败，说明流动性确实有问题
+            return { valid: false, error: '代币流动性不足，无法支持正常交易' };
+          }
+          
+          return { valid: true };
+        } catch (error) {
+          // 检查是否有V3池子可用
+          const v3Fees = [500, 2500, 10000];
+          let hasV3Pool = false;
+          
+          for (const feeAmount of v3Fees) {
+            try {
+              const poolContract = new ethers.Contract(
+                this.getV3PoolAddress(config.WBNB_ADDRESS, tokenAddress, feeAmount),
+                [
+                  "function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)"
+                ],
+                this.provider
+              );
+              await poolContract.slot0();
+              hasV3Pool = true;
+              break;
+            } catch (e) {
+              // 继续检查下一个费率
+            }
+          }
+          
+          if (hasV3Pool) {
+            return { valid: false, error: '该代币只在V3上有流动性，请尝试V3交易' };
+          } else {
+            return { valid: false, error: '该代币在PancakeSwap上没有流动性池，请检查代币地址或选择其他代币' };
+          }
+        }
+      }
+    } catch (error) {
+      return { valid: false, error: '路径验证失败' };
+    }
+  }
+
+  // 计算V3池子地址
+  getV3PoolAddress(tokenA, tokenB, fee) {
+    // 确保token地址顺序正确 (token0 < token1)
+    let token0, token1;
+    if (tokenA.toLowerCase() < tokenB.toLowerCase()) {
+      token0 = tokenA;
+      token1 = tokenB;
+    } else {
+      token0 = tokenB;
+      token1 = tokenA;
+    }
+    
+    // PancakeSwap V3 Factory 地址
+    const factoryAddress = '0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865';
+    
+    // 使用ethers.js计算池子地址 (CREATE2)
+    const salt = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ['address', 'address', 'uint24'],
+        [token0, token1, fee]
+      )
+    );
+    
+    // PancakeSwap V3 Pool Init Code Hash
+    const initCodeHash = '0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2';
+    
+    const poolAddress = ethers.getCreate2Address(
+      factoryAddress,
+      salt,
+      initCodeHash
+    );
+    
+    return poolAddress;
+  }
+
+  /**
+   * 获取V2和V3的价格报价并选择最优策略
+   */
+  async getBestPriceStrategy(tokenAddress, bnbAmount, isBuy = true) {
+    try {
+      console.log(`🧠 分析最优策略 - ${isBuy ? '买入' : '卖出'}: ${tokenAddress}, ${bnbAmount} BNB`);
+      
+      const results = {
+        v2: null,
+        v3: null,
+        bestStrategy: null,
+        bestPrice: null,
+        priceComparison: null
+      };
+
+      // 并行获取V2和V3的价格报价
+      const [v2Quote, v3Quote] = await Promise.allSettled([
+        this.getV2Quote(tokenAddress, bnbAmount, isBuy),
+        this.getV3Quote(tokenAddress, bnbAmount, isBuy)
+      ]);
+
+      // 处理V2报价
+      if (v2Quote.status === 'fulfilled' && v2Quote.value.success) {
+        results.v2 = v2Quote.value;
+        console.log(`📊 V2报价: ${results.v2.expectedAmount} tokens`);
+      } else {
+        console.log(`❌ V2报价失败: ${v2Quote.reason || 'Unknown error'}`);
+      }
+
+      // 处理V3报价
+      if (v3Quote.status === 'fulfilled' && v3Quote.value.success) {
+        results.v3 = v3Quote.value;
+        console.log(`📊 V3报价: ${results.v3.expectedAmount} tokens`);
+      } else {
+        console.log(`❌ V3报价失败: ${v3Quote.reason || 'Unknown error'}`);
+      }
+
+      // 选择最优策略
+      if (results.v2 && results.v3) {
+        // 两个都有效，比较价格
+        const v2Amount = parseFloat(results.v2.expectedAmount);
+        const v3Amount = parseFloat(results.v3.expectedAmount);
+        
+        if (isBuy) {
+          // 买入时选择能获得更多代币的路径
+          if (v2Amount > v3Amount) {
+            results.bestStrategy = 'v2';
+            results.bestPrice = results.v2;
+            results.priceComparison = `V2更优 (+${((v2Amount - v3Amount) / v3Amount * 100).toFixed(2)}%)`;
+          } else {
+            results.bestStrategy = 'v3';
+            results.bestPrice = results.v3;
+            results.priceComparison = `V3更优 (+${((v3Amount - v2Amount) / v2Amount * 100).toFixed(2)}%)`;
+          }
+        } else {
+          // 卖出时选择能获得更多BNB的路径
+          if (v2Amount > v3Amount) {
+            results.bestStrategy = 'v2';
+            results.bestPrice = results.v2;
+            results.priceComparison = `V2更优 (+${((v2Amount - v3Amount) / v3Amount * 100).toFixed(2)}%)`;
+          } else {
+            results.bestStrategy = 'v3';
+            results.bestPrice = results.v3;
+            results.priceComparison = `V3更优 (+${((v3Amount - v2Amount) / v2Amount * 100).toFixed(2)}%)`;
+          }
+        }
+        
+        console.log(`🎯 最优策略: ${results.bestStrategy.toUpperCase()} - ${results.priceComparison}`);
+      } else if (results.v2) {
+        // 只有V2可用
+        results.bestStrategy = 'v2';
+        results.bestPrice = results.v2;
+        results.priceComparison = 'V2可用，V3不可用';
+        console.log('📊 使用V2策略 (V3不可用)');
+      } else if (results.v3) {
+        // 只有V3可用
+        results.bestStrategy = 'v3';
+        results.bestPrice = results.v3;
+        results.priceComparison = 'V3可用，V2不可用';
+        console.log('📊 使用V3策略 (V2不可用)');
+      } else {
+        // 都不可用
+        console.log('❌ V2和V3都不可用');
+        return {
+          success: false,
+          error: '没有可用的交易路径'
+        };
+      }
+
+      return {
+        success: true,
+        ...results
+      };
+
+    } catch (error) {
+      console.error('智能策略分析失败:', error);
+      return {
+        success: false,
+        error: `策略分析失败: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * 获取V2价格报价
+   */
+  async getV2Quote(tokenAddress, bnbAmount, isBuy = true) {
+    try {
+      const bnbAmountNum = parseFloat(bnbAmount);
+      const amountIn = this.parseEtherSafe(bnbAmountNum);
+      
+      if (isBuy) {
+        // 买入：BNB -> Token
+        const path = [config.WBNB_ADDRESS, tokenAddress];
+        const amounts = await this.routerV2.getAmountsOut(amountIn, path);
+        
+        const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
+        const decimals = await tokenContract.decimals();
+        
+        return {
+          success: true,
+          version: 'v2',
+          expectedAmount: ethers.formatUnits(amounts[1], decimals),
+          path: path,
+          amountIn: amountIn.toString(),
+          amountOut: amounts[1].toString()
+        };
+      } else {
+        // 卖出：Token -> BNB
+        const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
+        const decimals = await tokenContract.decimals();
+        const tokenAmountIn = this.parseUnitsSafe(bnbAmountNum, decimals); // 这里bnbAmount实际是token数量
+        
+        const path = [tokenAddress, config.WBNB_ADDRESS];
+        const amounts = await this.routerV2.getAmountsOut(tokenAmountIn, path);
+        
+        return {
+          success: true,
+          version: 'v2',
+          expectedAmount: ethers.formatEther(amounts[1]),
+          path: path,
+          amountIn: tokenAmountIn.toString(),
+          amountOut: amounts[1].toString()
+        };
+      }
+    } catch (error) {
+      console.error('V2报价失败:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * 获取V3价格报价
+   */
+  async getV3Quote(tokenAddress, bnbAmount, isBuy = true, fee = 2500) {
+    try {
+      const bnbAmountNum = parseFloat(bnbAmount);
+      
+      // V3 Quoter合约地址和ABI
+      const quoterV3Address = '0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997';
+      const quoterV3ABI = [
+        "function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) external view returns (uint256 amountOut)"
+      ];
+      
+      const quoter = new ethers.Contract(quoterV3Address, quoterV3ABI, this.provider);
+      
+      if (isBuy) {
+        // 买入：BNB -> Token
+        const amountIn = this.parseEtherSafe(bnbAmountNum);
+        const amountOut = await quoter.quoteExactInputSingle(
+          config.WBNB_ADDRESS,
+          tokenAddress,
+          fee,
+          amountIn,
+          0
+        );
+        
+        const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
+        const decimals = await tokenContract.decimals();
+        
+        return {
+          success: true,
+          version: 'v3',
+          expectedAmount: ethers.formatUnits(amountOut, decimals),
+          fee: fee,
+          amountIn: amountIn.toString(),
+          amountOut: amountOut.toString()
+        };
+      } else {
+        // 卖出：Token -> BNB
+        const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
+        const decimals = await tokenContract.decimals();
+        const tokenAmountIn = this.parseUnitsSafe(bnbAmountNum, decimals);
+        
+        const amountOut = await quoter.quoteExactInputSingle(
+          tokenAddress,
+          config.WBNB_ADDRESS,
+          fee,
+          tokenAmountIn,
+          0
+        );
+        
+        return {
+          success: true,
+          version: 'v3',
+          expectedAmount: ethers.formatEther(amountOut),
+          fee: fee,
+          amountIn: tokenAmountIn.toString(),
+          amountOut: amountOut.toString()
+        };
+      }
+    } catch (error) {
+      console.error('V3报价失败:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * 比较V2和V3价格，返回最优路由
+   */
+  async getBestRoute(tokenAddress, bnbAmount, isBuy = true) {
+    try {
+      console.log(`🔍 正在比较 V2 和 V3 价格...`);
+      
+      // 并行获取V2和V3报价
+      const [v2Quote, v3Quote2500, v3Quote500, v3Quote10000] = await Promise.allSettled([
+        this.getV2Quote(tokenAddress, bnbAmount, isBuy),
+        this.getV3Quote(tokenAddress, bnbAmount, isBuy, 2500), // 0.25% fee
+        this.getV3Quote(tokenAddress, bnbAmount, isBuy, 500),  // 0.05% fee
+        this.getV3Quote(tokenAddress, bnbAmount, isBuy, 10000) // 1% fee
+      ]);
+
+      const quotes = [];
+      
+      // 处理V2报价
+      if (v2Quote.status === 'fulfilled' && v2Quote.value.success) {
+        quotes.push({
+          version: 'v2',
+          expectedAmount: parseFloat(v2Quote.value.expectedAmount),
+          quote: v2Quote.value
+        });
+      }
+      
+      // 处理V3报价
+      [v3Quote2500, v3Quote500, v3Quote10000].forEach((quote, index) => {
+        if (quote.status === 'fulfilled' && quote.value.success) {
+          quotes.push({
+            version: 'v3',
+            expectedAmount: parseFloat(quote.value.expectedAmount),
+            quote: quote.value
+          });
+        }
+      });
+
+      if (quotes.length === 0) {
+        return {
+          success: false,
+          error: '无法获取任何有效报价'
+        };
+      }
+
+      // 选择最优价格（买入时选择最多代币，卖出时选择最多BNB）
+      const bestRoute = quotes.reduce((best, current) => {
+        return current.expectedAmount > best.expectedAmount ? current : best;
+      });
+
+      console.log(`💡 最优路由: ${bestRoute.version.toUpperCase()}${bestRoute.quote.fee ? ` (fee: ${bestRoute.quote.fee/10000}%)` : ''}`);
+      console.log(`📊 预期获得: ${bestRoute.expectedAmount} ${isBuy ? '代币' : 'BNB'}`);
+      
+      // 显示所有报价比较
+      quotes.forEach(q => {
+        console.log(`   ${q.version.toUpperCase()}${q.quote.fee ? ` (${q.quote.fee/10000}%)` : ''}: ${q.expectedAmount}`);
+      });
+
+      return {
+        success: true,
+        bestRoute: bestRoute.quote,
+        allQuotes: quotes,
+        comparison: {
+          totalQuotes: quotes.length,
+          bestPrice: bestRoute.expectedAmount,
+          improvement: quotes.length > 1 ? 
+            ((bestRoute.expectedAmount - Math.min(...quotes.map(q => q.expectedAmount))) / Math.min(...quotes.map(q => q.expectedAmount)) * 100).toFixed(2) + '%' : 
+            '0%'
+        }
+      };
+
+    } catch (error) {
+      console.error('价格比较失败:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * 智能买入 - 自动选择最优价格的路由
+   */
+  async smartBuyOptimal(tokenAddress, bnbAmount) {
+    try {
+      console.log(`🧠 智能买入: ${tokenAddress}, ${bnbAmount} BNB`);
+      
+      // 验证和格式化BNB数量
+      const bnbAmountNum = parseFloat(bnbAmount);
+      if (isNaN(bnbAmountNum) || bnbAmountNum <= 0) {
+        return { success: false, error: '❌ 无效的BNB数量' };
+      }
+      
+      const isValid = await this.isValidTokenAddress(tokenAddress);
+      if (!isValid) {
+        return { success: false, error: '❌ 无效的代币地址' };
+      }
+
+      // 获取最优路由
+      const routeResult = await this.getBestRoute(tokenAddress, bnbAmount, true);
+      if (!routeResult.success) {
+        return { success: false, error: `❌ ${routeResult.error}` };
+      }
+
+      const bestRoute = routeResult.bestRoute;
+      
+      // 根据最优路由执行交易
+      let result;
+      if (bestRoute.version === 'v2') {
+        console.log('🔄 使用 PancakeSwap V2 执行买入');
+        result = await this.smartBuy(tokenAddress, bnbAmount);
+      } else {
+        console.log(`🔄 使用 PancakeSwap V3 (${bestRoute.fee/10000}%) 执行买入`);
+        result = await this.smartBuyV3(tokenAddress, bnbAmount, bestRoute.fee);
+      }
+
+      // 添加路由选择信息到结果
+      if (result.success) {
+        result.routeOptimization = {
+          selectedRoute: `${bestRoute.version.toUpperCase()}${bestRoute.fee ? ` (${bestRoute.fee/10000}%)` : ''}`,
+          priceImprovement: routeResult.comparison.improvement,
+          quotesCompared: routeResult.comparison.totalQuotes
+        };
+        result.message += ` (最优路由: ${result.routeOptimization.selectedRoute})`;
+        
+        console.log(`✨ 价格优化: ${routeResult.comparison.improvement} 提升`);
+      }
+
+      return result;
+
+    } catch (error) {
+      console.error('智能买入失败:', error);
+      return { success: false, error: this.parseContractError(error) };
+    }
+  }
+
+  /**
+   * 智能卖出 - 自动选择最优价格的路由
+   */
+  async smartSellOptimal(tokenAddress, tokenAmount) {
+    try {
+      console.log(`🧠 智能卖出: ${tokenAddress}, ${tokenAmount} 代币`);
+      
+      // 验证和格式化代币数量
+      const tokenAmountNum = parseFloat(tokenAmount);
+      if (isNaN(tokenAmountNum) || tokenAmountNum <= 0) {
+        return { success: false, error: '❌ 无效的代币数量' };
+      }
+      
+      const isValid = await this.isValidTokenAddress(tokenAddress);
+      if (!isValid) {
+        return { success: false, error: '❌ 无效的代币地址' };
+      }
+
+      // 获取最优路由
+      const routeResult = await this.getBestRoute(tokenAddress, tokenAmount, false);
+      if (!routeResult.success) {
+        return { success: false, error: `❌ ${routeResult.error}` };
+      }
+
+      const bestRoute = routeResult.bestRoute;
+      
+      // 根据最优路由执行交易
+      let result;
+      if (bestRoute.version === 'v2') {
+        console.log('🔄 使用 PancakeSwap V2 执行卖出');
+        result = await this.smartSell(tokenAddress, tokenAmount);
+      } else {
+        console.log(`🔄 使用 PancakeSwap V3 (${bestRoute.fee/10000}%) 执行卖出`);
+        result = await this.smartSellV3(tokenAddress, tokenAmount, bestRoute.fee);
+      }
+
+      // 添加路由选择信息到结果
+      if (result.success) {
+        result.routeOptimization = {
+          selectedRoute: `${bestRoute.version.toUpperCase()}${bestRoute.fee ? ` (${bestRoute.fee/10000}%)` : ''}`,
+          priceImprovement: routeResult.comparison.improvement,
+          quotesCompared: routeResult.comparison.totalQuotes
+        };
+        result.message += ` (最优路由: ${result.routeOptimization.selectedRoute})`;
+        
+        console.log(`✨ 价格优化: ${routeResult.comparison.improvement} 提升`);
+      }
+
+      return result;
+
+    } catch (error) {
+      console.error('智能卖出失败:', error);
+      return { success: false, error: this.parseContractError(error) };
+    }
+  }
+
+  /**
+   * 获取代币的最优价格信息（用于价格查询）
+   */
+  async getOptimalPrice(tokenAddress, bnbAmount = 0.001, isBuy = true) {
+    try {
+      const routeResult = await this.getBestRoute(tokenAddress, bnbAmount, isBuy);
+      if (!routeResult.success) {
+        return { success: false, error: routeResult.error };
+      }
+
+      const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
+      const symbol = await tokenContract.symbol();
+
+      return {
+        success: true,
+        symbol: symbol,
+        tokenAddress: tokenAddress,
+        bestRoute: routeResult.bestRoute,
+        priceComparison: routeResult.allQuotes.map(q => ({
+          version: q.version.toUpperCase() + (q.quote.fee ? ` (${q.quote.fee/10000}%)` : ''),
+          price: q.expectedAmount,
+          isBest: q.quote === routeResult.bestRoute
+        })),
+        improvement: routeResult.comparison.improvement
+      };
+    } catch (error) {
+      console.error('获取最优价格失败:', error);
+      return { success: false, error: error.message };
     }
   }
 }
