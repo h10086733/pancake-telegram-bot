@@ -22,6 +22,11 @@ module.exports = {
   DEFAULT_BUY_AMOUNT: parseFloat(process.env.DEFAULT_BUY_AMOUNT), // 默认购买0.05 BNB
   DEFAULT_SELL_PERCENTAGE: parseFloat(process.env.DEFAULT_SELL_PERCENTAGE), // 默认卖出100%
   
+  // Liquidity Settings
+  MIN_LIQUIDITY_RATIO: parseInt(process.env.MIN_LIQUIDITY_RATIO) || 10,
+  MIN_ABSOLUTE_LIQUIDITY: parseFloat(process.env.MIN_ABSOLUTE_LIQUIDITY) || 0.1,
+  LIQUIDITY_WARNING_RATIO: parseInt(process.env.LIQUIDITY_WARNING_RATIO) || 20,
+  
   // Security
   ADMIN_CHAT_IDS: process.env.ADMIN_CHAT_IDS || '',
   ENABLE_TRADING: process.env.ENABLE_TRADING === 'true',

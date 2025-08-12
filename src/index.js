@@ -1,5 +1,5 @@
 require('dotenv').config();
-const PancakeTelegramBot = require('./bot');
+const TelegramBot = require('./bot');
 const { ensureDir } = require('./utils');
 
 async function main() {
@@ -29,7 +29,7 @@ async function main() {
     }
     
     // 创建并启动机器人
-    const bot = new PancakeTelegramBot();
+    const bot = new TelegramBot();
     
     // 等待机器人完全初始化
     await new Promise(resolve => setTimeout(resolve, 1000));

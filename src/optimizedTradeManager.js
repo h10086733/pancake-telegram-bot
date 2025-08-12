@@ -1785,21 +1785,28 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
    */
   async getV2Quote(tokenAddress, bnbAmount, isBuy = true) {
     try {
+      console.log(`🔍 V2报价查询: ${isBuy ? '买入' : '卖出'}`);
       const bnbAmountNum = parseFloat(bnbAmount);
-      const amountIn = this.parseEtherSafe(bnbAmountNum);
-      
+
       if (isBuy) {
         // 买入：BNB -> Token
+        const amountIn = this.parseEtherSafe(bnbAmountNum);
         const path = [config.WBNB_ADDRESS, tokenAddress];
+        
+        console.log(`V2买入查询: ${ethers.formatEther(amountIn)} BNB -> ${tokenAddress}`);
+        
         const amounts = await this.routerV2.getAmountsOut(amountIn, path);
         
         const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
         const decimals = await tokenContract.decimals();
+        const formattedAmount = ethers.formatUnits(amounts[1], decimals);
+        
+        console.log(`✅ V2买入报价: ${formattedAmount} 代币`);
         
         return {
           success: true,
           version: 'v2',
-          expectedAmount: ethers.formatUnits(amounts[1], decimals),
+          expectedAmount: formattedAmount,
           path: path,
           amountIn: amountIn.toString(),
           amountOut: amounts[1].toString()
@@ -1810,20 +1817,25 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
         const decimals = await tokenContract.decimals();
         const tokenAmountIn = this.parseUnitsSafe(bnbAmountNum, decimals); // 这里bnbAmount实际是token数量
         
+        console.log(`V2卖出查询: ${bnbAmountNum} 代币 -> BNB`);
+        
         const path = [tokenAddress, config.WBNB_ADDRESS];
         const amounts = await this.routerV2.getAmountsOut(tokenAmountIn, path);
+        const formattedAmount = ethers.formatEther(amounts[1]);
+        
+        console.log(`✅ V2卖出报价: ${formattedAmount} BNB`);
         
         return {
           success: true,
           version: 'v2',
-          expectedAmount: ethers.formatEther(amounts[1]),
+          expectedAmount: formattedAmount,
           path: path,
           amountIn: tokenAmountIn.toString(),
           amountOut: amounts[1].toString()
         };
       }
     } catch (error) {
-      console.error('V2报价失败:', error);
+      console.error('❌ V2报价失败:', error.message);
       return {
         success: false,
         error: error.message
@@ -1832,16 +1844,40 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
   }
 
   /**
-   * 获取V3价格报价
+   * 获取V3价格报价 - 使用SmartRouter更可靠
    */
   async getV3Quote(tokenAddress, bnbAmount, isBuy = true, fee = 2500) {
     try {
+      console.log(`🔍 V3报价查询: ${isBuy ? '买入' : '卖出'}, fee: ${fee/10000}%`);
       const bnbAmountNum = parseFloat(bnbAmount);
       
-      // V3 Quoter合约地址和ABI
+      // 先检查池子是否存在
+      const poolExists = await this.checkV3Pool(tokenAddress, fee);
+      if (!poolExists) {
+        console.log(`⚠️ V3池不存在 (fee: ${fee/10000}%): 未找到对应流动性池`);
+        return {
+          success: false,
+          error: 'V3流动性池不存在',
+          fee: fee,
+          poolNotExist: true
+        };
+      }
+      
+      // 检查V3池的流动性状况
+      const liquidityCheck = await this.checkV3Liquidity(tokenAddress, fee, bnbAmount, isBuy);
+      if (!liquidityCheck.sufficient) {
+        return {
+          success: false,
+          error: `V3流动性不足: ${liquidityCheck.reason}`,
+          fee: fee,
+          liquidityIssue: true
+        };
+      }
+      
+      // V3 Quoter合约地址和ABI (PancakeSwap V3)
       const quoterV3Address = '0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997';
       const quoterV3ABI = [
-        "function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) external view returns (uint256 amountOut)"
+        "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)"
       ];
       
       const quoter = new ethers.Contract(quoterV3Address, quoterV3ABI, this.provider);
@@ -1849,21 +1885,28 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
       if (isBuy) {
         // 买入：BNB -> Token
         const amountIn = this.parseEtherSafe(bnbAmountNum);
-        const amountOut = await quoter.quoteExactInputSingle(
-          config.WBNB_ADDRESS,
-          tokenAddress,
-          fee,
-          amountIn,
-          0
-        );
+        console.log(`V3买入查询: ${ethers.formatEther(amountIn)} BNB -> ${tokenAddress}`);
+        
+        const quoteParams = {
+          tokenIn: config.WBNB_ADDRESS,
+          tokenOut: tokenAddress,
+          amountIn: amountIn,
+          fee: fee,
+          sqrtPriceLimitX96: 0
+        };
+        
+        const [amountOut] = await quoter.quoteExactInputSingle.staticCall(quoteParams);
         
         const tokenContract = new ethers.Contract(tokenAddress, this.erc20ABI, this.provider);
         const decimals = await tokenContract.decimals();
+        const formattedAmount = ethers.formatUnits(amountOut, decimals);
+        
+        console.log(`✅ V3买入报价 (${fee/10000}%): ${formattedAmount} 代币`);
         
         return {
           success: true,
           version: 'v3',
-          expectedAmount: ethers.formatUnits(amountOut, decimals),
+          expectedAmount: formattedAmount,
           fee: fee,
           amountIn: amountIn.toString(),
           amountOut: amountOut.toString()
@@ -1874,38 +1917,92 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
         const decimals = await tokenContract.decimals();
         const tokenAmountIn = this.parseUnitsSafe(bnbAmountNum, decimals);
         
-        const amountOut = await quoter.quoteExactInputSingle(
-          tokenAddress,
-          config.WBNB_ADDRESS,
-          fee,
-          tokenAmountIn,
-          0
-        );
+        console.log(`V3卖出查询: ${bnbAmountNum} 代币 -> BNB`);
+        
+        const quoteParams = {
+          tokenIn: tokenAddress,
+          tokenOut: config.WBNB_ADDRESS,
+          amountIn: tokenAmountIn,
+          fee: fee,
+          sqrtPriceLimitX96: 0
+        };
+        
+        const [amountOut] = await quoter.quoteExactInputSingle.staticCall(quoteParams);
+        
+        const formattedAmount = ethers.formatEther(amountOut);
+        console.log(`✅ V3卖出报价 (${fee/10000}%): ${formattedAmount} BNB`);
         
         return {
           success: true,
           version: 'v3',
-          expectedAmount: ethers.formatEther(amountOut),
+          expectedAmount: formattedAmount,
           fee: fee,
           amountIn: tokenAmountIn.toString(),
           amountOut: amountOut.toString()
         };
       }
     } catch (error) {
-      console.error('V3报价失败:', error);
-      return {
-        success: false,
-        error: error.message
-      };
+      // 检查是否是流动性不足的错误
+      const isLiquidityIssue = error.message.includes('execution reverted') || 
+                              error.message.includes('require(false)') ||
+                              error.message.includes('SPL') || // Sqrt price limit
+                              error.code === 'CALL_EXCEPTION';
+      
+      if (isLiquidityIssue) {
+        console.log(`⚠️ V3池流动性不足或价格范围问题 (fee: ${fee/10000}%): 尝试使用V2`);
+        return {
+          success: false,
+          error: 'V3池流动性不足或价格范围不支持此交易',
+          fee: fee,
+          poolNotExist: false,
+          liquidityIssue: true
+        };
+      } else {
+        console.error(`❌ V3报价失败 (fee: ${fee/10000}%):`, error.message);
+        return {
+          success: false,
+          error: error.message,
+          fee: fee,
+          poolNotExist: false,
+          liquidityIssue: false
+        };
+      }
     }
   }
 
   /**
-   * 比较V2和V3价格，返回最优路由
+   * 检查V3池是否存在
+   */
+  async checkV3Pool(tokenAddress, fee) {
+    try {
+      const factoryAddress = '0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865';
+      const factoryABI = [
+        "function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool)"
+      ];
+      
+      const factory = new ethers.Contract(factoryAddress, factoryABI, this.provider);
+      const poolAddress = await factory.getPool(config.WBNB_ADDRESS, tokenAddress, fee);
+      
+      const exists = poolAddress !== '0x0000000000000000000000000000000000000000';
+      if (exists) {
+        console.log(`✅ V3池存在 (fee: ${fee/10000}%): ${poolAddress}`);
+      } else {
+        console.log(`❌ V3池不存在 (fee: ${fee/10000}%)`);
+      }
+      
+      return exists;
+    } catch (error) {
+      console.error(`检查V3池失败 (fee: ${fee/10000}%):`, error.message);
+      return false;
+    }
+  }
+
+  /**
+   * 比较V2和V3价格，返回最优路由（包含流动性检查）
    */
   async getBestRoute(tokenAddress, bnbAmount, isBuy = true) {
     try {
-      console.log(`🔍 正在比较 V2 和 V3 价格...`);
+      console.log(`🔍 正在比较 V2 和 V3 价格（含流动性检查）...`);
       
       // 并行获取V2和V3报价
       const [v2Quote, v3Quote2500, v3Quote500, v3Quote10000] = await Promise.allSettled([
@@ -1916,32 +2013,128 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
       ]);
 
       const quotes = [];
+      const rejectedQuotes = []; // 存储被拒绝的报价（包括流动性不足的）
+      let v3PoolsNotExist = 0;
+      let v3PoolsLiquidityIssue = 0;
       
-      // 处理V2报价
+      // 处理V2报价（含流动性检查）
+      console.log(`📊 V2报价结果: ${v2Quote.status}`);
       if (v2Quote.status === 'fulfilled' && v2Quote.value.success) {
-        quotes.push({
+        // V2流动性检查
+        const v2Liquidity = await this.checkV2Liquidity(tokenAddress, bnbAmount);
+        const v2QuoteInfo = {
           version: 'v2',
           expectedAmount: parseFloat(v2Quote.value.expectedAmount),
-          quote: v2Quote.value
+          quote: v2Quote.value,
+          liquidityInfo: v2Liquidity
+        };
+        
+        if (v2Liquidity.sufficient) {
+          quotes.push(v2QuoteInfo);
+          console.log(`✅ V2报价成功: ${v2Quote.value.expectedAmount} (流动性: ${v2Liquidity.liquidityInBNB} BNB ${v2Liquidity.emoji}) 池子: ${v2Liquidity.pairAddress}`);
+        } else {
+          rejectedQuotes.push({...v2QuoteInfo, rejectedReason: 'liquidity'});
+          console.log(`❌ V2流动性不足: ${v2Liquidity.reason} 池子: ${v2Liquidity.pairAddress || 'N/A'}`);
+        }
+      } else {
+        rejectedQuotes.push({
+          version: 'v2',
+          rejectedReason: 'quote_failed',
+          error: v2Quote.status === 'fulfilled' ? v2Quote.value.error : v2Quote.reason
         });
+        console.log(`❌ V2报价失败: ${v2Quote.status === 'fulfilled' ? v2Quote.value.error : v2Quote.reason}`);
       }
       
-      // 处理V3报价
-      [v3Quote2500, v3Quote500, v3Quote10000].forEach((quote, index) => {
+      // 处理V3报价（含流动性检查）
+      const v3Quotes = [v3Quote2500, v3Quote500, v3Quote10000];
+      const fees = [2500, 500, 10000];
+      
+      for (let index = 0; index < v3Quotes.length; index++) {
+        const quote = v3Quotes[index];
+        const fee = fees[index];
+        console.log(`📊 V3报价结果 (${fee/10000}%): ${quote.status}`);
         if (quote.status === 'fulfilled' && quote.value.success) {
-          quotes.push({
+          // V3流动性检查
+          const v3Liquidity = await this.checkV3Liquidity(tokenAddress, fee, bnbAmount, isBuy);
+          const v3QuoteInfo = {
             version: 'v3',
             expectedAmount: parseFloat(quote.value.expectedAmount),
-            quote: quote.value
+            quote: quote.value,
+            liquidityInfo: v3Liquidity
+          };
+          
+          if (v3Liquidity.sufficient) {
+            quotes.push(v3QuoteInfo);
+            console.log(`✅ V3报价成功 (${fee/10000}%): ${quote.value.expectedAmount} (流动性: ${v3Liquidity.liquidityInBNB} BNB ${v3Liquidity.emoji}) 池子: ${v3Liquidity.poolAddress}`);
+          } else {
+            v3PoolsLiquidityIssue++;
+            rejectedQuotes.push({...v3QuoteInfo, rejectedReason: 'liquidity'});
+            console.log(`❌ V3流动性不足 (${fee/10000}%): ${v3Liquidity.reason} 池子: ${v3Liquidity.poolAddress || 'N/A'}`);
+          }
+        } else if (quote.status === 'fulfilled') {
+          if (quote.value.poolNotExist) {
+            v3PoolsNotExist++;
+            rejectedQuotes.push({
+              version: 'v3',
+              fee: fee,
+              rejectedReason: 'pool_not_exist',
+              error: quote.value.error
+            });
+            console.log(`⚠️ V3池不存在 (${fee/10000}%): ${quote.value.error}`);
+          } else if (quote.value.liquidityIssue) {
+            v3PoolsLiquidityIssue++;
+            rejectedQuotes.push({
+              version: 'v3',
+              fee: fee,
+              rejectedReason: 'quote_liquidity_issue',
+              error: quote.value.error
+            });
+            console.log(`⚠️ V3池流动性问题 (${fee/10000}%): ${quote.value.error}`);
+          } else {
+            rejectedQuotes.push({
+              version: 'v3',
+              fee: fee,
+              rejectedReason: 'quote_failed',
+              error: quote.value.error
+            });
+            console.log(`❌ V3报价失败 (${fee/10000}%): ${quote.value.error}`);
+          }
+        } else {
+          rejectedQuotes.push({
+            version: 'v3',
+            fee: fee,
+            rejectedReason: 'quote_rejected',
+            error: quote.reason
           });
+          console.log(`❌ V3报价被拒绝 (${fee/10000}%): ${quote.reason}`);
         }
-      });
+      }
 
       if (quotes.length === 0) {
-        return {
-          success: false,
-          error: '无法获取任何有效报价'
-        };
+        // 如果没有可用报价，显示所有被拒绝的原因
+        console.log(`❌ 所有池子都不可用:`);
+        rejectedQuotes.forEach(rq => {
+          if (rq.version === 'v2') {
+            console.log(`   V2: ${rq.rejectedReason === 'liquidity' ? `流动性不足 (${rq.liquidityInfo.reason})` : rq.error} 池子: ${rq.liquidityInfo?.pairAddress || 'N/A'}`);
+          } else {
+            const feeStr = rq.fee ? ` (${rq.fee/10000}%)` : '';
+            console.log(`   V3${feeStr}: ${rq.rejectedReason === 'liquidity' ? `流动性不足 (${rq.liquidityInfo.reason})` : rq.error} 池子: ${rq.liquidityInfo?.poolAddress || 'N/A'}`);
+          }
+        });
+        
+        if (v3PoolsNotExist === 3) {
+          return {
+            success: false,
+            error: '该代币暂不支持PancakeSwap V3交易，且V2流动性不足',
+            rejectedQuotes: rejectedQuotes
+          };
+        } else {
+          return {
+            success: false,
+            error: '无法获取任何有效报价，可能是流动性不足',
+            rejectedQuotes: rejectedQuotes
+          };
+        }
       }
 
       // 选择最优价格（买入时选择最多代币，卖出时选择最多BNB）
@@ -1949,20 +2142,57 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
         return current.expectedAmount > best.expectedAmount ? current : best;
       });
 
+      const hasV3 = quotes.some(q => q.version === 'v3');
+      const v3PoolStatus = v3PoolsNotExist === 3 ? 'V3池全部不存在' : 
+                          v3PoolsLiquidityIssue > 0 ? `V3池存在但流动性不足 (${v3PoolsLiquidityIssue}个)` :
+                          v3PoolsNotExist > 0 ? `${3-v3PoolsNotExist}个V3池可用` : 
+                          'V3池全部可用';
+
       console.log(`💡 最优路由: ${bestRoute.version.toUpperCase()}${bestRoute.quote.fee ? ` (fee: ${bestRoute.quote.fee/10000}%)` : ''}`);
       console.log(`📊 预期获得: ${bestRoute.expectedAmount} ${isBuy ? '代币' : 'BNB'}`);
+      console.log(`🏊 流动性状况: ${v3PoolStatus}`);
+      console.log(`💧 最优流动性: ${bestRoute.liquidityInfo ? bestRoute.liquidityInfo.liquidityInBNB + ' BNB ' + bestRoute.liquidityInfo.emoji + ' (' + bestRoute.liquidityInfo.level + ')' : '未知'}`);
+      console.log(`🏠 最优池子地址: ${bestRoute.liquidityInfo ? (bestRoute.liquidityInfo.poolAddress || bestRoute.liquidityInfo.pairAddress) : 'N/A'}`);
       
       // 显示所有报价比较
+      console.log(`📋 路由比较:`);
       quotes.forEach(q => {
-        console.log(`   ${q.version.toUpperCase()}${q.quote.fee ? ` (${q.quote.fee/10000}%)` : ''}: ${q.expectedAmount}`);
+        const liquidityInfo = q.liquidityInfo ? ` (${q.liquidityInfo.liquidityInBNB} BNB ${q.liquidityInfo.emoji})` : '';
+        const poolAddress = q.liquidityInfo ? (q.liquidityInfo.poolAddress || q.liquidityInfo.pairAddress) : 'N/A';
+        const isBest = q === bestRoute ? ' 👑' : '';
+        console.log(`   ${q.version.toUpperCase()}${q.quote.fee ? ` (${q.quote.fee/10000}%)` : ''}: ${q.expectedAmount}${liquidityInfo} 池子: ${poolAddress}${isBest}`);
       });
+      
+      // 显示被拒绝的报价
+      if (rejectedQuotes.length > 0) {
+        console.log(`❌ 被拒绝的路由:`);
+        rejectedQuotes.forEach(rq => {
+          const reason = rq.rejectedReason === 'liquidity' ? `流动性不足` : 
+                        rq.rejectedReason === 'pool_not_exist' ? '池子不存在' : 
+                        rq.rejectedReason === 'quote_failed' ? '报价失败' : '未知原因';
+          const poolAddress = rq.liquidityInfo ? (rq.liquidityInfo.poolAddress || rq.liquidityInfo.pairAddress) : 'N/A';
+          const feeStr = rq.fee ? ` (${rq.fee/10000}%)` : '';
+          console.log(`   ${rq.version.toUpperCase()}${feeStr}: ${reason} 池子: ${poolAddress}`);
+        });
+      }
 
       return {
         success: true,
         bestRoute: bestRoute.quote,
+        bestLiquidity: bestRoute.liquidityInfo,
+        bestPoolAddress: bestRoute.liquidityInfo ? (bestRoute.liquidityInfo.poolAddress || bestRoute.liquidityInfo.pairAddress) : null,
         allQuotes: quotes,
+        rejectedQuotes: rejectedQuotes,
+        liquidityInfo: {
+          v3PoolsAvailable: 3 - v3PoolsNotExist,
+          v3PoolsTotal: 3,
+          hasV3Liquidity: hasV3,
+          v3PoolsLiquidityIssue: v3PoolsLiquidityIssue,
+          status: v3PoolStatus
+        },
         comparison: {
           totalQuotes: quotes.length,
+          totalRejected: rejectedQuotes.length,
           bestPrice: bestRoute.expectedAmount,
           improvement: quotes.length > 1 ? 
             ((bestRoute.expectedAmount - Math.min(...quotes.map(q => q.expectedAmount))) / Math.min(...quotes.map(q => q.expectedAmount)) * 100).toFixed(2) + '%' : 
@@ -2022,9 +2252,15 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
           priceImprovement: routeResult.comparison.improvement,
           quotesCompared: routeResult.comparison.totalQuotes
         };
+        result.liquidityInfo = routeResult.bestLiquidity; // 添加最优路由的流动性信息
         result.message += ` (最优路由: ${result.routeOptimization.selectedRoute})`;
         
         console.log(`✨ 价格优化: ${routeResult.comparison.improvement} 提升`);
+        
+        // 流动性警告
+        if (routeResult.bestLiquidity && routeResult.bestLiquidity.warning) {
+          console.log(`⚠️ 流动性警告: ${routeResult.bestLiquidity.reason}`);
+        }
       }
 
       return result;
@@ -2078,9 +2314,15 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
           priceImprovement: routeResult.comparison.improvement,
           quotesCompared: routeResult.comparison.totalQuotes
         };
+        result.liquidityInfo = routeResult.bestLiquidity; // 添加最优路由的流动性信息
         result.message += ` (最优路由: ${result.routeOptimization.selectedRoute})`;
         
         console.log(`✨ 价格优化: ${routeResult.comparison.improvement} 提升`);
+        
+        // 流动性警告
+        if (routeResult.bestLiquidity && routeResult.bestLiquidity.warning) {
+          console.log(`⚠️ 流动性警告: ${routeResult.bestLiquidity.reason}`);
+        }
       }
 
       return result;
@@ -2109,6 +2351,7 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
         symbol: symbol,
         tokenAddress: tokenAddress,
         bestRoute: routeResult.bestRoute,
+        liquidityInfo: routeResult.liquidityInfo,
         priceComparison: routeResult.allQuotes.map(q => ({
           version: q.version.toUpperCase() + (q.quote.fee ? ` (${q.quote.fee/10000}%)` : ''),
           price: q.expectedAmount,
@@ -2119,6 +2362,192 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
     } catch (error) {
       console.error('获取最优价格失败:', error);
       return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * 检查V3池的流动性状况
+   */
+  async checkV3Liquidity(tokenAddress, fee, tradeAmount, isBuy = true) {
+    try {
+      const factoryAddress = '0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865';
+      const factoryABI = [
+        "function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool)"
+      ];
+      
+      const factory = new ethers.Contract(factoryAddress, factoryABI, this.provider);
+      const poolAddress = await factory.getPool(config.WBNB_ADDRESS, tokenAddress, fee);
+      
+      if (poolAddress === '0x0000000000000000000000000000000000000000') {
+        return { sufficient: false, reason: '池子不存在' };
+      }
+      
+      // 检查池子的流动性
+      const poolABI = [
+        "function liquidity() external view returns (uint128)",
+        "function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)",
+        "function token0() external view returns (address)",
+        "function token1() external view returns (address)"
+      ];
+      
+      const pool = new ethers.Contract(poolAddress, poolABI, this.provider);
+      const [liquidity, slot0, token0, token1] = await Promise.all([
+        pool.liquidity(),
+        pool.slot0(),
+        pool.token0(),
+        pool.token1()
+      ]);
+      
+      const liquidityValue = Number(liquidity.toString());
+      const sqrtPriceX96 = Number(slot0.sqrtPriceX96.toString());
+      
+      // 计算大概的流动性价值（简化计算）
+      let liquidityInBNB = 0;
+      if (sqrtPriceX96 > 0 && liquidityValue > 0) {
+        // 这是一个简化的流动性计算
+        const price = (sqrtPriceX96 ** 2) / (2 ** 192);
+        
+        if (token0.toLowerCase() === config.WBNB_ADDRESS.toLowerCase()) {
+          liquidityInBNB = liquidityValue * Math.sqrt(price) / 1e18;
+        } else {
+          liquidityInBNB = liquidityValue / Math.sqrt(price) / 1e18;
+        }
+      }
+      
+      // 流动性判断标准（从配置读取）
+      const tradeAmountNum = parseFloat(tradeAmount);
+      const minLiquidityRatio = config.MIN_LIQUIDITY_RATIO || 10;
+      const minAbsoluteLiquidity = config.MIN_ABSOLUTE_LIQUIDITY || 0.1;
+      const warningRatio = config.LIQUIDITY_WARNING_RATIO || 20;
+      
+      const requiredLiquidity = Math.max(tradeAmountNum * minLiquidityRatio, minAbsoluteLiquidity);
+      const sufficient = liquidityInBNB >= requiredLiquidity;
+      const liquidityRatio = liquidityInBNB / tradeAmountNum;
+      
+      // 流动性级别判断
+      let liquidityLevel = 'poor';
+      let liquidityEmoji = '🔴';
+      if (liquidityRatio >= warningRatio) {
+        liquidityLevel = 'excellent';
+        liquidityEmoji = '🟢';
+      } else if (liquidityRatio >= minLiquidityRatio) {
+        liquidityLevel = 'good';
+        liquidityEmoji = '🟡';
+      }
+      
+      console.log(`💧 V3流动性检查 (${fee/10000}%): ${liquidityInBNB.toFixed(6)} BNB, 需要: ${requiredLiquidity.toFixed(6)} BNB, 比例: ${liquidityRatio.toFixed(1)}x ${liquidityEmoji} ${sufficient ? '✅充足' : '❌不足'}`);
+      
+      return {
+        sufficient,
+        poolAddress,
+        liquidityInBNB: liquidityInBNB.toFixed(6),
+        requiredLiquidity: requiredLiquidity.toFixed(6),
+        ratio: liquidityRatio,
+        level: liquidityLevel,
+        emoji: liquidityEmoji,
+        warning: liquidityRatio < warningRatio && liquidityRatio >= minLiquidityRatio,
+        reason: sufficient ? 
+          `流动性${liquidityLevel} (${liquidityRatio.toFixed(1)}x)` : 
+          `流动性不足 (${liquidityInBNB.toFixed(6)} < ${requiredLiquidity.toFixed(6)} BNB, 仅${liquidityRatio.toFixed(1)}x)`
+      };
+      
+    } catch (error) {
+      console.error(`流动性检查失败 (fee: ${fee/10000}%):`, error.message);
+      return { 
+        sufficient: false, 
+        reason: `检查失败: ${error.message}`,
+        liquidityInBNB: '0',
+        requiredLiquidity: '0',
+        ratio: 0
+      };
+    }
+  }
+
+  /**
+   * 检查V2流动性
+   */
+  async checkV2Liquidity(tokenAddress, tradeAmount) {
+    try {
+      // V2 Pair 地址计算或直接查询
+      const factoryAddress = '0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73'; // PancakeSwap V2 Factory
+      const factoryABI = [
+        "function getPair(address tokenA, address tokenB) external view returns (address pair)"
+      ];
+      
+      const factory = new ethers.Contract(factoryAddress, factoryABI, this.provider);
+      const pairAddress = await factory.getPair(config.WBNB_ADDRESS, tokenAddress);
+      
+      if (pairAddress === '0x0000000000000000000000000000000000000000') {
+        return { sufficient: false, reason: 'V2池子不存在' };
+      }
+      
+      // 检查V2 pair的储备
+      const pairABI = [
+        "function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
+        "function token0() external view returns (address)",
+        "function token1() external view returns (address)"
+      ];
+      
+      const pair = new ethers.Contract(pairAddress, pairABI, this.provider);
+      const [reserves, token0] = await Promise.all([
+        pair.getReserves(),
+        pair.token0()
+      ]);
+      
+      // 确定WBNB的储备
+      let bnbReserve;
+      if (token0.toLowerCase() === config.WBNB_ADDRESS.toLowerCase()) {
+        bnbReserve = Number(ethers.formatEther(reserves.reserve0));
+      } else {
+        bnbReserve = Number(ethers.formatEther(reserves.reserve1));
+      }
+      
+      // V2流动性判断（从配置读取）
+      const tradeAmountNum = parseFloat(tradeAmount);
+      const minLiquidityRatio = config.MIN_LIQUIDITY_RATIO || 10;
+      const minAbsoluteLiquidity = config.MIN_ABSOLUTE_LIQUIDITY || 0.1;
+      const warningRatio = config.LIQUIDITY_WARNING_RATIO || 20;
+      
+      const requiredLiquidity = Math.max(tradeAmountNum * minLiquidityRatio, minAbsoluteLiquidity);
+      const sufficient = bnbReserve >= requiredLiquidity;
+      const liquidityRatio = bnbReserve / tradeAmountNum;
+      
+      // 流动性级别判断
+      let liquidityLevel = 'poor';
+      let liquidityEmoji = '🔴';
+      if (liquidityRatio >= warningRatio) {
+        liquidityLevel = 'excellent';
+        liquidityEmoji = '🟢';
+      } else if (liquidityRatio >= minLiquidityRatio) {
+        liquidityLevel = 'good';
+        liquidityEmoji = '🟡';
+      }
+      
+      console.log(`💧 V2流动性检查: ${bnbReserve.toFixed(6)} BNB, 需要: ${requiredLiquidity.toFixed(6)} BNB, 比例: ${liquidityRatio.toFixed(1)}x ${liquidityEmoji} ${sufficient ? '✅充足' : '❌不足'}`);
+      
+      return {
+        sufficient,
+        pairAddress,
+        liquidityInBNB: bnbReserve.toFixed(6),
+        requiredLiquidity: requiredLiquidity.toFixed(6),
+        ratio: liquidityRatio,
+        level: liquidityLevel,
+        emoji: liquidityEmoji,
+        warning: liquidityRatio < warningRatio && liquidityRatio >= minLiquidityRatio,
+        reason: sufficient ? 
+          `流动性${liquidityLevel} (${liquidityRatio.toFixed(1)}x)` : 
+          `流动性不足 (${bnbReserve.toFixed(6)} < ${requiredLiquidity.toFixed(6)} BNB, 仅${liquidityRatio.toFixed(1)}x)`
+      };
+      
+    } catch (error) {
+      console.error('V2流动性检查失败:', error.message);
+      return { 
+        sufficient: false, 
+        reason: `检查失败: ${error.message}`,
+        liquidityInBNB: '0',
+        requiredLiquidity: '0',
+        ratio: 0
+      };
     }
   }
 }

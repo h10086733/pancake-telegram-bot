@@ -1,4 +1,4 @@
-const TelegramBot = require('node-telegram-bot-api');
+const TelegramBotAPI = require('node-telegram-bot-api');
 const { ethers } = require('ethers');
 const winston = require('winston');
 const config = require('./config');
@@ -22,7 +22,7 @@ const logger = winston.createLogger({
   ]
 });
 
-class PancakeTelegramBot {
+class TelegramBot {
   constructor() {
     // 配置更稳定的轮询选项
     const botOptions = {
@@ -35,7 +35,7 @@ class PancakeTelegramBot {
       }
     };
     
-    this.bot = new TelegramBot(config.TELEGRAM_BOT_TOKEN, botOptions);
+    this.bot = new TelegramBotAPI(config.TELEGRAM_BOT_TOKEN, botOptions);
     this.tradeManager = new OptimizedTradeManager();
     this.userSessions = new Map();
     
@@ -128,6 +128,7 @@ class PancakeTelegramBot {
       { command: 'holdings', description: '📊 查看代币持仓' },
       { command: 'price', description: '📈 查询代币价格' },
       { command: 'compare', description: '🔍 比较V2/V3价格' },
+      { command: 'liquidity', description: '💧 检查流动性状况' },
       { command: 'addtoken', description: '➕ 添加代币监控' },
       { command: 'menu', description: '🎮 显示主菜单' },
       { command: 'quick', description: '⚡ 快速操作' },
@@ -159,6 +160,7 @@ class PancakeTelegramBot {
     // 价格和分析命令
     this.bot.onText(/\/price (.+)/, (msg, match) => this.handlePriceCommand(msg, match));
     this.bot.onText(/\/compare (.+)/, (msg, match) => this.handleCompareCommand(msg, match));
+    this.bot.onText(/\/liquidity (.+)/, (msg, match) => this.handleLiquidityCommand(msg, match));
     
     // 钱包命令
     this.bot.onText(/\/balance/, (msg) => this.handleBalance(msg));
@@ -254,6 +256,7 @@ class PancakeTelegramBot {
 *📊 查询命令：*
 • \`/price <代币地址>\` - 查询代币价格
 • \`/compare <代币地址>\` - 比较V2/V3价格和最优路由
+• \`/liquidity <代币地址>\` - 详细检查流动性状况
 • \`/balance\` - 查看钱包余额
 • \`/holdings\` - 查看代币持仓列表 (基于交易记录)
 
@@ -314,10 +317,11 @@ class PancakeTelegramBot {
           { text: '🔍 价格比较', callback_data: 'price_compare' }
         ],
         [
-          { text: '⚡ 快速菜单', callback_data: 'quick_menu' },
-          { text: '🧠 智能买入', callback_data: 'smart_buy' }
+          { text: '💧 流动性检查', callback_data: 'liquidity_check' },
+          { text: '⚡ 快速菜单', callback_data: 'quick_menu' }
         ],
         [
+          { text: '🧠 智能买入', callback_data: 'smart_buy' },
           { text: '💸 智能卖出', callback_data: 'smart_sell' }
         ],
         [
@@ -576,12 +580,29 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
   }
 
   async handleSmartBuy(chatId, tokenAddress, bnbAmount) {
-    const progressMsg = await this.bot.sendMessage(chatId, '🧠 正在比较 V2/V3 价格，寻找最优路径...');
+    const progressMsg = await this.bot.sendMessage(chatId, '🧠 正在比较 V2/V3 价格和检查流动性...');
 
     try {
       const result = await this.tradeManager.smartBuyOptimal(tokenAddress, bnbAmount);
       
       await this.bot.deleteMessage(chatId, progressMsg.message_id);
+      
+      // 如果交易成功，显示流动性信息
+      if (result.success && result.liquidityInfo) {
+        const liquidity = result.liquidityInfo;
+        let liquidityWarning = '';
+        
+        if (liquidity.warning) {
+          liquidityWarning = `\n⚠️ *流动性提醒*: 该池流动性较低 (${liquidity.ratio?.toFixed(1) || '?'}x)，交易可能有较大滑点`;
+        } else if (liquidity.level === 'excellent') {
+          liquidityWarning = `\n✅ *流动性充足*: ${liquidity.ratio?.toFixed(1) || '?'}x 流动性，交易影响较小`;
+        }
+        
+        if (liquidityWarning) {
+          await this.bot.sendMessage(chatId, liquidityWarning, { parse_mode: 'Markdown' });
+        }
+      }
+      
       return result;
 
     } catch (error) {
@@ -594,12 +615,29 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
   }
 
   async handleSmartSell(chatId, tokenAddress, tokenAmount) {
-    const progressMsg = await this.bot.sendMessage(chatId, '🧠 正在比较 V2/V3 价格，寻找最优路径...');
+    const progressMsg = await this.bot.sendMessage(chatId, '🧠 正在比较 V2/V3 价格和检查流动性...');
 
     try {
       const result = await this.tradeManager.smartSellOptimal(tokenAddress, tokenAmount);
       
       await this.bot.deleteMessage(chatId, progressMsg.message_id);
+      
+      // 如果交易成功，显示流动性信息
+      if (result.success && result.liquidityInfo) {
+        const liquidity = result.liquidityInfo;
+        let liquidityWarning = '';
+        
+        if (liquidity.warning) {
+          liquidityWarning = `\n⚠️ *流动性提醒*: 该池流动性较低 (${liquidity.ratio?.toFixed(1) || '?'}x)，交易可能有较大滑点`;
+        } else if (liquidity.level === 'excellent') {
+          liquidityWarning = `\n✅ *流动性充足*: ${liquidity.ratio?.toFixed(1) || '?'}x 流动性，交易影响较小`;
+        }
+        
+        if (liquidityWarning) {
+          await this.bot.sendMessage(chatId, liquidityWarning, { parse_mode: 'Markdown' });
+        }
+      }
+      
       return result;
 
     } catch (error) {
@@ -658,49 +696,87 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
       return this.bot.sendMessage(chatId, '❌ 无效的地址格式');
     }
 
-    const loadingMsg = await this.bot.sendMessage(chatId, '🔍 正在比较V2和V3价格...');
+    const loadingMsg = await this.bot.sendMessage(chatId, '🔍 正在比较V2和V3价格（包含流动性检查）...');
 
     try {
-      // 获取最优价格信息 (买入)
-      const buyPriceInfo = await this.tradeManager.getOptimalPrice(tokenAddress, 0.001, true);
-      // 获取最优价格信息 (卖出)  
-      const sellPriceInfo = await this.tradeManager.getOptimalPrice(tokenAddress, 1000, false);
+      // 获取详细路由信息 (买入)
+      const buyRouteInfo = await this.tradeManager.getBestRoute(tokenAddress, 0.001, true);
       
       await this.bot.deleteMessage(chatId, loadingMsg.message_id);
 
-      if (buyPriceInfo.success && sellPriceInfo.success) {
-        const buyComparison = buyPriceInfo.priceComparison.map(p => 
-          `${p.isBest ? '🏆' : '📊'} ${p.version}: ${parseFloat(p.price).toFixed(6)}`
-        ).join('\n');
-        
-        const sellComparison = sellPriceInfo.priceComparison.map(p => 
-          `${p.isBest ? '🏆' : '📊'} ${p.version}: ${parseFloat(p.price).toFixed(6)}`
-        ).join('\n');
+      if (buyRouteInfo.success) {
+        // 构建所有报价信息
+        let allQuotesInfo = '✅ *可用路由*:\n';
+        buyRouteInfo.allQuotes.forEach(q => {
+          const poolAddress = q.liquidityInfo ? (q.liquidityInfo.poolAddress || q.liquidityInfo.pairAddress) : 'N/A';
+          const shortAddress = poolAddress !== 'N/A' ? `${poolAddress.slice(0,6)}...${poolAddress.slice(-4)}` : 'N/A';
+          const isBest = q === buyRouteInfo.allQuotes.find(best => best.expectedAmount === buyRouteInfo.comparison.bestPrice) ? ' 👑' : '';
+          const feeStr = q.quote.fee ? ` (${q.quote.fee/10000}%)` : '';
+          allQuotesInfo += `• ${q.version.toUpperCase()}${feeStr}: ${q.expectedAmount} 代币\n`;
+          allQuotesInfo += `  💧 流动性: ${q.liquidityInfo.liquidityInBNB} BNB ${q.liquidityInfo.emoji} (${q.liquidityInfo.ratio.toFixed(1)}x)\n`;
+          allQuotesInfo += `  🏠 池子: \`${shortAddress}\`${isBest}\n\n`;
+        });
+
+        // 构建被拒绝的路由信息
+        let rejectedInfo = '';
+        if (buyRouteInfo.rejectedQuotes && buyRouteInfo.rejectedQuotes.length > 0) {
+          rejectedInfo = '\n❌ *不可用路由*:\n';
+          buyRouteInfo.rejectedQuotes.forEach(rq => {
+            const reason = rq.rejectedReason === 'liquidity' ? '流动性不足' : 
+                          rq.rejectedReason === 'pool_not_exist' ? '池子不存在' : 
+                          rq.rejectedReason === 'quote_failed' ? '报价失败' : '未知原因';
+            const poolAddress = rq.liquidityInfo ? (rq.liquidityInfo.poolAddress || rq.liquidityInfo.pairAddress) : 'N/A';
+            const shortAddress = poolAddress !== 'N/A' ? `${poolAddress.slice(0,6)}...${poolAddress.slice(-4)}` : 'N/A';
+            const feeStr = rq.fee ? ` (${rq.fee/10000}%)` : '';
+            rejectedInfo += `• ${rq.version.toUpperCase()}${feeStr}: ${reason}\n`;
+            if (rq.liquidityInfo) {
+              rejectedInfo += `  💧 流动性: ${rq.liquidityInfo.liquidityInBNB} BNB ${rq.liquidityInfo.emoji} (${rq.liquidityInfo.ratio.toFixed(1)}x)\n`;
+            }
+            rejectedInfo += `  🏠 池子: \`${shortAddress}\`\n\n`;
+          });
+        }
+
+        // 最优路由信息
+        const bestPoolAddress = buyRouteInfo.bestPoolAddress;
+        const bestShortAddress = bestPoolAddress ? `${bestPoolAddress.slice(0,6)}...${bestPoolAddress.slice(-4)}` : 'N/A';
 
         const message = `
-🔍 *V2/V3 价格比较*
+🔍 *流动性与价格分析报告*
 
 🪙 代币: \`${tokenAddress}\`
-🏷️ 符号: ${buyPriceInfo.symbol}
+💰 买入金额: 0.001 BNB
 
-💰 *买入价格比较* (0.001 BNB → 代币):
-${buyComparison}
-📈 最优提升: ${buyPriceInfo.improvement}
+${allQuotesInfo}${rejectedInfo}
+🏆 *最优选择*:
+• 路由: ${buyRouteInfo.bestRoute.version.toUpperCase()}${buyRouteInfo.bestRoute.fee ? ` (${buyRouteInfo.bestRoute.fee/10000}%)` : ''}
+• 预期获得: ${buyRouteInfo.comparison.bestPrice} 代币
+• 池子地址: \`${bestPoolAddress || 'N/A'}\`
+• 流动性等级: ${buyRouteInfo.bestLiquidity?.level || '未知'} ${buyRouteInfo.bestLiquidity?.emoji || ''}
 
-💸 *卖出价格比较* (1000 代币 → BNB):
-${sellComparison}  
-📈 最优提升: ${sellPriceInfo.improvement}
+📊 *统计*:
+• 可用路由: ${buyRouteInfo.comparison.totalQuotes}
+• 被拒路由: ${buyRouteInfo.comparison.totalRejected || 0}
+• 价格提升: ${buyRouteInfo.comparison.improvement}
 
-🧠 *智能选择:*
-• 买入最优: ${buyPriceInfo.bestRoute.version.toUpperCase()}${buyPriceInfo.bestRoute.fee ? ` (${buyPriceInfo.bestRoute.fee/10000}%)` : ''}
-• 卖出最优: ${sellPriceInfo.bestRoute.version.toUpperCase()}${sellPriceInfo.bestRoute.fee ? ` (${sellPriceInfo.bestRoute.fee/10000}%)` : ''}
-
-💡 使用 /buy 或 /sell 命令将自动选择最优路由
+💡 使用 /buy 命令将自动选择最优路由
         `;
         await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
       } else {
-        const error = buyPriceInfo.error || sellPriceInfo.error || '未知错误';
-        await this.bot.sendMessage(chatId, `❌ 价格比较失败: ${error}`);
+        // 显示所有失败的原因
+        let errorDetails = buyRouteInfo.error;
+        if (buyRouteInfo.rejectedQuotes && buyRouteInfo.rejectedQuotes.length > 0) {
+          errorDetails += '\n\n❌ *详细信息*:\n';
+          buyRouteInfo.rejectedQuotes.forEach(rq => {
+            const reason = rq.rejectedReason === 'liquidity' ? '流动性不足' : 
+                          rq.rejectedReason === 'pool_not_exist' ? '池子不存在' : 
+                          rq.rejectedReason === 'quote_failed' ? '报价失败' : '未知原因';
+            const poolAddress = rq.liquidityInfo ? (rq.liquidityInfo.poolAddress || rq.liquidityInfo.pairAddress) : 'N/A';
+            const shortAddress = poolAddress !== 'N/A' ? `${poolAddress.slice(0,6)}...${poolAddress.slice(-4)}` : 'N/A';
+            const feeStr = rq.fee ? ` (${rq.fee/10000}%)` : '';
+            errorDetails += `• ${rq.version.toUpperCase()}${feeStr}: ${reason} (池子: \`${shortAddress}\`)\n`;
+          });
+        }
+        await this.bot.sendMessage(chatId, `❌ 流动性检查失败:\n\n${errorDetails}`, { parse_mode: 'Markdown' });
       }
 
     } catch (error) {
@@ -869,6 +945,9 @@ ${sellComparison}
         break;
       case 'price_compare':
         await this.bot.sendMessage(chatId, '🔍 请输入代币地址比较V2/V3价格，或使用命令 /compare <代币地址>');
+        break;
+      case 'liquidity_check':
+        await this.bot.sendMessage(chatId, '💧 请输入代币地址检查流动性状况，或使用命令 /liquidity <代币地址>');
         break;
       case 'smart_buy':
         await this.bot.sendMessage(chatId, '🧠 请使用命令 /buy <代币地址> <BNB数量> 进行智能购买');
@@ -1682,42 +1761,12 @@ ${addressText}
         console.log('📡 轮询已启动');
       }
       
-      console.log('🎉 PancakeSwap 智能交易机器人已成功启动!');
-      console.log('📊 功能包括:');
-      console.log('  • 智能买卖交易 (V2/V3自动选择)');
-      console.log('  • 利润计算和追踪');
-      console.log('  • Twitter通知 (可选)');
-      console.log('  • 完整交易历史');
-      
-      logger.info('Telegram bot started successfully', {
-        botUsername: me.username,
-        botName: me.first_name
-      });
-      
+      console.log('🤖 机器人启动完成！');
     } catch (error) {
-      console.error('❌ 机器人启动失败:', error.message);
-      logger.error('Failed to start Telegram bot', { error: error.message });
-      throw error;
-    }
-  }
-
-  async stop() {
-    try {
-      console.log('🛑 正在停止机器人...');
-      
-      if (this.bot.isPolling()) {
-        await this.bot.stopPolling();
-        console.log('📡 轮询已停止');
-      }
-      
-      console.log('✅ PancakeSwap 智能交易机器人已停止');
-      logger.info('Telegram bot stopped');
-      
-    } catch (error) {
-      console.error('❌ 停止机器人时出错:', error.message);
-      logger.error('Error stopping Telegram bot', { error: error.message });
+      console.error('启动机器人时发生错误:', error);
+      process.exit(1);
     }
   }
 }
 
-module.exports = PancakeTelegramBot;
+module.exports = TelegramBot;
