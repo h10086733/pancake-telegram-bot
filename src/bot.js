@@ -24,9 +24,23 @@ const logger = winston.createLogger({
 
 class PancakeTelegramBot {
   constructor() {
-    this.bot = new TelegramBot(config.TELEGRAM_BOT_TOKEN, { polling: true });
+    // 配置更稳定的轮询选项
+    const botOptions = {
+      polling: {
+        interval: 1000,           // 轮询间隔1秒
+        autoStart: true,          // 自动开始轮询
+        params: {
+          timeout: 10             // API超时10秒
+        }
+      }
+    };
+    
+    this.bot = new TelegramBot(config.TELEGRAM_BOT_TOKEN, botOptions);
     this.tradeManager = new OptimizedTradeManager();
     this.userSessions = new Map();
+    
+    // 添加错误处理监听器
+    this.setupErrorHandlers();
     
     // 设置持久菜单
     this.persistentKeyboard = {
@@ -43,6 +57,65 @@ class PancakeTelegramBot {
     this.setupBotCommands();
     this.setupCommands();
     this.setupCallbacks();
+  }
+
+  setupErrorHandlers() {
+    // 处理轮询错误
+    this.bot.on('polling_error', (error) => {
+      console.error('🔴 Telegram轮询错误:', error.message);
+      logger.error('Telegram polling error', { error: error.message, code: error.code });
+      
+      // 如果是网络错误，尝试重新连接
+      if (error.code === 'EFATAL' || error.message.includes('socket hang up')) {
+        console.log('⚠️ 检测到网络错误，准备重新启动轮询...');
+        setTimeout(() => {
+          console.log('🔄 尝试重新启动轮询...');
+          this.restartPolling();
+        }, 5000); // 5秒后重试
+      }
+    });
+
+    // 处理其他错误
+    this.bot.on('error', (error) => {
+      console.error('🔴 Telegram机器人错误:', error.message);
+      logger.error('Telegram bot error', { error: error.message });
+    });
+
+    // 处理未捕获的异常
+    process.on('uncaughtException', (error) => {
+      console.error('🔴 未捕获异常:', error.message);
+      logger.error('Uncaught exception', { error: error.message, stack: error.stack });
+    });
+
+    // 处理未处理的Promise拒绝
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('🔴 未处理的Promise拒绝:', reason);
+      logger.error('Unhandled promise rejection', { reason, promise });
+    });
+  }
+
+  async restartPolling() {
+    try {
+      console.log('🛑 停止当前轮询...');
+      await this.bot.stopPolling();
+      
+      await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒
+      
+      console.log('🚀 重新启动轮询...');
+      await this.bot.startPolling();
+      console.log('✅ 轮询重新启动成功');
+      
+      logger.info('Telegram polling restarted successfully');
+    } catch (error) {
+      console.error('❌ 重启轮询失败:', error.message);
+      logger.error('Failed to restart polling', { error: error.message });
+      
+      // 如果重启失败，等待更长时间后再次尝试
+      setTimeout(() => {
+        console.log('🔄 再次尝试重启轮询...');
+        this.restartPolling();
+      }, 10000); // 10秒后再次尝试
+    }
   }
 
   async setupBotCommands() {
@@ -311,21 +384,12 @@ class PancakeTelegramBot {
     const loadingMsg = await this.bot.sendMessage(chatId, '🔍 正在验证代币地址...');
 
     try {
-      const validation = await this.tradeManager.isValidTokenAddress(tokenAddress);
+      const isValidToken = await this.tradeManager.isValidTokenAddress(tokenAddress);
       
       await this.bot.deleteMessage(chatId, loadingMsg.message_id);
       
-      if (!validation.valid) {
-        let errorMessage = `❌ ${validation.reason}`;
-        
-        if (validation.pairInfo) {
-          errorMessage += `\n\n💡 检测到这是交易对地址，包含以下代币:`;
-          errorMessage += `\n• Token0: \`${validation.pairInfo.token0}\``;
-          errorMessage += `\n• Token1: \`${validation.pairInfo.token1}\``;
-          errorMessage += `\n\n请使用其中一个代币地址进行交易。`;
-        }
-        
-        return this.bot.sendMessage(chatId, errorMessage, { parse_mode: 'Markdown' });
+      if (!isValidToken) {
+        return this.bot.sendMessage(chatId, '❌ 无效的代币地址或代币不存在', { parse_mode: 'Markdown' });
       }
 
       const result = await this.handleSmartBuy(chatId, tokenAddress, bnbAmount);
@@ -344,7 +408,8 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
         `;
         await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
       } else {
-        await this.bot.sendMessage(chatId, `❌ 购买失败: ${result?.error || '未知错误'}`);
+        const errorMessage = result?.error || result?.message || '交易执行失败，请稍后重试';
+        await this.bot.sendMessage(chatId, `❌ 购买失败: ${errorMessage}`);
       }
 
     } catch (error) {
@@ -352,7 +417,8 @@ ${result.fee ? `💱 池子费率: ${result.fee/10000}%` : ''}
       try {
         await this.bot.deleteMessage(chatId, loadingMsg.message_id);
       } catch (e) {}
-      await this.bot.sendMessage(chatId, '❌ 购买过程中发生错误');
+      const errorMessage = error?.message || error?.reason || '购买过程中发生未知错误';
+      await this.bot.sendMessage(chatId, `❌ 购买过程中发生错误: ${errorMessage}`);
     }
   }
 
@@ -1531,9 +1597,55 @@ ${addressText}
     }
   }
 
-  start() {
-    console.log('🤖 PancakeSwap 智能交易机器人已启动...');
-    logger.info('Telegram bot started');
+  async start() {
+    try {
+      console.log('🤖 PancakeSwap 智能交易机器人启动中...');
+      
+      // 验证机器人token
+      const me = await this.bot.getMe();
+      console.log(`✅ 机器人已连接: @${me.username} (${me.first_name})`);
+      
+      // 设置webhook或启动轮询
+      if (!this.bot.isPolling()) {
+        await this.bot.startPolling();
+        console.log('📡 轮询已启动');
+      }
+      
+      console.log('🎉 PancakeSwap 智能交易机器人已成功启动!');
+      console.log('📊 功能包括:');
+      console.log('  • 智能买卖交易 (V2/V3自动选择)');
+      console.log('  • 利润计算和追踪');
+      console.log('  • Twitter通知 (可选)');
+      console.log('  • 完整交易历史');
+      
+      logger.info('Telegram bot started successfully', {
+        botUsername: me.username,
+        botName: me.first_name
+      });
+      
+    } catch (error) {
+      console.error('❌ 机器人启动失败:', error.message);
+      logger.error('Failed to start Telegram bot', { error: error.message });
+      throw error;
+    }
+  }
+
+  async stop() {
+    try {
+      console.log('🛑 正在停止机器人...');
+      
+      if (this.bot.isPolling()) {
+        await this.bot.stopPolling();
+        console.log('📡 轮询已停止');
+      }
+      
+      console.log('✅ PancakeSwap 智能交易机器人已停止');
+      logger.info('Telegram bot stopped');
+      
+    } catch (error) {
+      console.error('❌ 停止机器人时出错:', error.message);
+      logger.error('Error stopping Telegram bot', { error: error.message });
+    }
   }
 }
 

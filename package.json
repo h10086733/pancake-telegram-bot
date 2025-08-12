@@ -5,8 +5,12 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "start-stable": "node start-bot.js",
     "dev": "nodemon src/index.js",
     "test": "node src/test.js",
+    "test-twitter": "node test-twitter.js",
+    "test-profit": "node test-profit.js",
+    "test-full": "node test-full-system.js",
     "setup": "node src/setup.js",
     "check-config": "node check-config.js",
     "bot-info": "node get-bot-info.js"

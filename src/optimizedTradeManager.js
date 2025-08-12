@@ -557,6 +557,12 @@ class OptimizedTradeManager {
     try {
       console.log(`🛒 买入: ${tokenAddress}, ${bnbAmount} BNB`);
       
+      // 验证和格式化BNB数量
+      const bnbAmountNum = parseFloat(bnbAmount);
+      if (isNaN(bnbAmountNum) || bnbAmountNum <= 0) {
+        return { success: false, error: '无效的BNB数量' };
+      }
+      
       // 更新Gas价格
       await this.updateGasPrice();
       
@@ -571,7 +577,8 @@ class OptimizedTradeManager {
         tokenContract.decimals()
       ]);
       
-      const amountIn = ethers.parseEther(bnbAmount.toString());
+      // 使用安全的数值解析
+      const amountIn = this.parseEtherSafe(bnbAmountNum);
       const path = [config.WBNB_ADDRESS, tokenAddress];
       
       const amounts = await this.router.getAmountsOut(amountIn, path);
@@ -586,7 +593,7 @@ class OptimizedTradeManager {
         deadline,
         {
           value: amountIn,
-          gasPrice: ethers.parseUnits(this.settings.gasPrice.toString(), 'gwei'),
+          gasPrice: this.parseUnitsSafe(this.settings.gasPrice, 'gwei'),
           gasLimit: this.settings.gasLimit
         }
       );
@@ -600,7 +607,7 @@ class OptimizedTradeManager {
         try {
           const priceInfo = await this.getTokenPrice(tokenAddress);
           const priceUSD = priceInfo.success ? priceInfo.priceInUSD : null;
-          const tweetMessage = this.generateBuyTweet(symbol, bnbAmount, tx.hash, priceUSD);
+          const tweetMessage = this.generateBuyTweet(symbol, bnbAmountNum, tx.hash, priceUSD);
           await this.sendTweet(tweetMessage);
         } catch (twitterError) {
           console.log('Twitter通知发送失败:', twitterError.message);
@@ -609,14 +616,14 @@ class OptimizedTradeManager {
         // 记录买入交易
         const priceInfo = await this.getTokenPrice(tokenAddress).catch(() => ({ success: false }));
         const bnbPrice = priceInfo.success ? priceInfo.priceInBNB : '0';
-        this.recordBuyTrade(tokenAddress, symbol, bnbAmount, ethers.formatUnits(amounts[1], decimals), bnbPrice, receipt.gasUsed.toString(), tx.hash);
+        this.recordBuyTrade(tokenAddress, symbol, bnbAmountNum, ethers.formatUnits(amounts[1], decimals), bnbPrice, receipt.gasUsed.toString(), tx.hash);
         
         return {
           success: true,
           txHash: tx.hash,
           message: `成功买入 ${symbol}`,
           details: {
-            amountIn: bnbAmount,
+            amountIn: bnbAmountNum,
             expectedTokens: ethers.formatUnits(amounts[1], decimals),
             slippage: this.settings.slippage,
             gasUsed: receipt.gasUsed.toString()
@@ -636,6 +643,12 @@ class OptimizedTradeManager {
     try {
       console.log(`🛒 V3买入: ${tokenAddress}, ${bnbAmount} BNB`);
       
+      // 验证和格式化BNB数量
+      const bnbAmountNum = parseFloat(bnbAmount);
+      if (isNaN(bnbAmountNum) || bnbAmountNum <= 0) {
+        return { success: false, error: '无效的BNB数量' };
+      }
+      
       // 更新Gas价格
       await this.updateGasPrice();
       
@@ -650,7 +663,8 @@ class OptimizedTradeManager {
         tokenContract.decimals()
       ]);
       
-      const amountIn = ethers.parseEther(bnbAmount.toString());
+      // 使用安全的数值解析
+      const amountIn = this.parseEtherSafe(bnbAmountNum);
       
       const quoted = await this.routerV3.quoteExactInputSingle(
         config.WBNB_ADDRESS,
@@ -672,9 +686,9 @@ class OptimizedTradeManager {
         amountIn: amountIn,
         amountOutMinimum: amountOutMin,
         sqrtPriceLimit: 0
-      }, {
+      },      {
         value: amountIn,
-        gasPrice: ethers.parseUnits(this.settings.gasPrice.toString(), 'gwei'),
+        gasPrice: this.parseUnitsSafe(this.settings.gasPrice, 'gwei'),
         gasLimit: this.settings.gasLimit
       });
       
@@ -748,7 +762,7 @@ class OptimizedTradeManager {
         };
       }
       
-      const amountIn = ethers.parseUnits(tokenAmount.toString(), decimals);
+      const amountIn = this.parseTokenAmountSafe(tokenAmount, decimals);
       
       // 检查授权
       const allowance = await tokenContract.allowance(this.wallet.address, this.routerAddress);
@@ -772,7 +786,7 @@ class OptimizedTradeManager {
         this.wallet.address,
         deadline,
         {
-          gasPrice: ethers.parseUnits(this.settings.gasPrice.toString(), 'gwei'),
+          gasPrice: this.parseUnitsSafe(this.settings.gasPrice, 'gwei'),
           gasLimit: this.settings.gasLimit
         }
       );
@@ -851,7 +865,7 @@ class OptimizedTradeManager {
         };
       }
       
-      const amountIn = ethers.parseUnits(tokenAmount.toString(), decimals);
+      const amountIn = this.parseTokenAmountSafe(tokenAmount, decimals);
       
       // 检查授权
       const allowance = await tokenContract.allowance(this.wallet.address, this.routerAddress);
@@ -1005,9 +1019,10 @@ class OptimizedTradeManager {
    */
   async updateGasPrice() {
     const dynamicGasPrice = await this.getDynamicGasPrice();
-    this.settings.gasPrice = dynamicGasPrice;
-    console.log(`⚡ Gas价格已更新为: ${dynamicGasPrice.toFixed(2)} Gwei`);
-    return dynamicGasPrice;
+    // 使用安全格式化确保没有精度问题
+    this.settings.gasPrice = parseFloat(this.formatDecimalSafe(dynamicGasPrice, 9));
+    console.log(`⚡ Gas价格已更新为: ${this.settings.gasPrice.toFixed(2)} Gwei`);
+    return this.settings.gasPrice;
   }
 
   // 权限验证
@@ -1215,7 +1230,7 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
         };
       }
       
-      const amountIn = ethers.parseUnits(tokenAmount.toString(), decimals);
+      const amountIn = this.parseTokenAmountSafe(tokenAmount, decimals);
       
       // 检查授权
       const allowance = await tokenContract.allowance(this.wallet.address, this.routerAddress);
@@ -1239,7 +1254,7 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
         this.wallet.address,
         deadline,
         {
-          gasPrice: ethers.parseUnits(this.settings.gasPrice.toString(), 'gwei'),
+          gasPrice: this.parseUnitsSafe(this.settings.gasPrice, 'gwei'),
           gasLimit: this.settings.gasLimit
         }
       );
@@ -1305,6 +1320,96 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
     } catch (error) {
       console.error('卖出失败:', error);
       return { success: false, error: `卖出失败: ${error.reason || error.message}` };
+    }
+  }
+
+  /**
+   * 安全的数值格式化，避免浮点数精度问题
+   */
+  formatDecimalSafe(value, decimals = 18) {
+    try {
+      // 处理特殊值
+      if (value === null || value === undefined || value === '') {
+        return '0';
+      }
+      
+      // 转换为数字
+      const numValue = Number(value);
+      
+      // 检查是否为有效数字
+      if (isNaN(numValue) || !isFinite(numValue)) {
+        return '0';
+      }
+      
+      // 转换为字符串并处理精度问题
+      let valueStr = numValue.toString();
+      
+      // 如果是科学计数法，转换为标准格式
+      if (valueStr.includes('e')) {
+        valueStr = numValue.toFixed(decimals);
+      }
+      
+      // 移除尾随的零
+      if (valueStr.includes('.')) {
+        valueStr = valueStr.replace(/\.?0+$/, '');
+      }
+      
+      // 限制小数位数
+      const parts = valueStr.split('.');
+      if (parts[1] && parts[1].length > decimals) {
+        valueStr = parts[0] + '.' + parts[1].substring(0, decimals);
+      }
+      
+      return valueStr;
+    } catch (error) {
+      console.error('数值格式化错误:', error);
+      return '0';
+    }
+  }
+
+  /**
+   * 安全的以太坊数值解析
+   */
+  parseEtherSafe(value) {
+    try {
+      const safeValue = this.formatDecimalSafe(value, 18);
+      return ethers.parseEther(safeValue);
+    } catch (error) {
+      console.error('以太坊数值解析错误:', error, 'value:', value);
+      throw new Error(`数值解析失败: ${value}`);
+    }
+  }
+
+  /**
+   * 安全的单位解析（用于Gas价格等）
+   */
+  parseUnitsSafe(value, unit = 'gwei', decimals = 9) {
+    try {
+      const safeValue = this.formatDecimalSafe(value, decimals);
+      return ethers.parseUnits(safeValue, unit);
+    } catch (error) {
+      console.error('单位解析错误:', error, 'value:', value, 'unit:', unit);
+      throw new Error(`单位解析失败: ${value} ${unit}`);
+    }
+  }
+
+  /**
+   * 安全的代币数量解析
+   */
+  parseTokenAmountSafe(amount, decimals) {
+    try {
+      // 验证和格式化代币数量
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) {
+        throw new Error('无效的代币数量');
+      }
+      
+      // 使用安全格式化，限制小数位数不超过代币精度
+      const safeAmount = this.formatDecimalSafe(amountNum, Number(decimals));
+      return ethers.parseUnits(safeAmount, decimals);
+    } catch (error) {
+      console.error('代币数量解析错误:', error, 'amount:', amount, 'decimals:', decimals);
+      throw new Error(`代币数量解析失败: ${amount}`);
     }
   }
 }
