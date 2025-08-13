@@ -1767,6 +1767,21 @@ ${addressText}
       process.exit(1);
     }
   }
+
+  async stop() {
+    try {
+      console.log('🛑 正在停止机器人...');
+      
+      if (this.bot.isPolling()) {
+        await this.bot.stopPolling();
+        console.log('📡 轮询已停止');
+      }
+      
+      console.log('🤖 机器人已安全关闭');
+    } catch (error) {
+      console.error('停止机器人时发生错误:', error);
+    }
+  }
 }
 
 module.exports = TelegramBot;

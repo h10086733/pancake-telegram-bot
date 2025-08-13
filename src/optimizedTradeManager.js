@@ -700,12 +700,23 @@ class OptimizedTradeManager {
       // 使用安全的数值解析
       const amountIn = this.parseEtherSafe(bnbAmountNum);
       
-      const quoted = await this.routerV3.quoteExactInputSingle(
-        config.WBNB_ADDRESS,
-        tokenAddress,
-        fee,
-        amountIn
-      );
+      // 使用专门的Quoter合约获取报价（与getV3Quote保持一致）
+      const quoterV3Address = '0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997';
+      const quoterV3ABI = [
+        "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)"
+      ];
+      
+      const quoter = new ethers.Contract(quoterV3Address, quoterV3ABI, this.provider);
+      
+      const quoteParams = {
+        tokenIn: config.WBNB_ADDRESS,
+        tokenOut: tokenAddress,
+        amountIn: amountIn,
+        fee: fee,
+        sqrtPriceLimitX96: 0
+      };
+      
+      const [quoted] = await quoter.quoteExactInputSingle.staticCall(quoteParams);
       
       const amountOutMin = quoted * BigInt(100 - this.settings.slippage) / BigInt(100);
       
@@ -934,12 +945,23 @@ class OptimizedTradeManager {
         await approveTx.wait();
       }
       
-      const quoted = await this.routerV3.quoteExactInputSingle(
-        tokenAddress,
-        config.WBNB_ADDRESS,
-        fee,
-        amountIn
-      );
+      // 使用专门的Quoter合约获取报价（与getV3Quote保持一致）
+      const quoterV3Address = '0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997';
+      const quoterV3ABI = [
+        "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) external returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)"
+      ];
+      
+      const quoter = new ethers.Contract(quoterV3Address, quoterV3ABI, this.provider);
+      
+      const quoteParams = {
+        tokenIn: tokenAddress,
+        tokenOut: config.WBNB_ADDRESS,
+        amountIn: amountIn,
+        fee: fee,
+        sqrtPriceLimitX96: 0
+      };
+      
+      const [quoted] = await quoter.quoteExactInputSingle.staticCall(quoteParams);
       
       const amountOutMin = quoted * BigInt(100 - this.settings.slippage) / BigInt(100);
       
@@ -1558,20 +1580,34 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
       const testAmount = ethers.parseEther('0.001'); // 测试用的小额
       
       if (isV3) {
-        // V3路径验证 - 检查池子是否存在
-        const poolContract = new ethers.Contract(
-          this.getV3PoolAddress(config.WBNB_ADDRESS, tokenAddress, fee),
-          [
-            "function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)"
-          ],
-          this.provider
-        );
-        
-        try {
-          await poolContract.slot0();
-          return { valid: true };
-        } catch (error) {
+        // V3路径验证 - 使用与流动性检查相同的方法
+        const poolExists = await this.checkV3Pool(tokenAddress, fee);
+        if (!poolExists) {
           return { valid: false, error: `V3流动性池不存在 (费率${fee/10000}%)` };
+        }
+        
+        // 进一步检查池子的流动性状况
+        try {
+          const factoryAddress = '0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865';
+          const factoryABI = [
+            "function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool)"
+          ];
+          
+          const factory = new ethers.Contract(factoryAddress, factoryABI, this.provider);
+          const poolAddress = await factory.getPool(config.WBNB_ADDRESS, tokenAddress, fee);
+          
+          const poolContract = new ethers.Contract(
+            poolAddress,
+            [
+              "function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)"
+            ],
+            this.provider
+          );
+          
+          await poolContract.slot0();
+          return { valid: true, poolAddress: poolAddress };
+        } catch (error) {
+          return { valid: false, error: `V3池子状态异常 (费率${fee/10000}%): ${error.message}` };
         }
       } else {
         // V2路径验证 - 增强版
@@ -2399,20 +2435,35 @@ ${priceInfo}${profitMessage}🔗 交易: https://bscscan.com/tx/${txHash}
       ]);
       
       const liquidityValue = Number(liquidity.toString());
-      const sqrtPriceX96 = Number(slot0.sqrtPriceX96.toString());
+      const sqrtPriceX96 = BigInt(slot0.sqrtPriceX96.toString());
       
-      // 计算大概的流动性价值（简化计算）
+      console.log(`🔍 V3池详情 (${fee/10000}%): 地址=${poolAddress}, liquidity=${liquidityValue}, sqrtPriceX96=${sqrtPriceX96.toString()}`);
+      console.log(`🔍 token0=${token0}, token1=${token1}, WBNB=${config.WBNB_ADDRESS}`);
+      
+      // 简化的流动性估算方法
       let liquidityInBNB = 0;
-      if (sqrtPriceX96 > 0 && liquidityValue > 0) {
-        // 这是一个简化的流动性计算
-        const price = (sqrtPriceX96 ** 2) / (2 ** 192);
+      
+      if (liquidityValue > 0) {
+        // 使用简单的流动性估算：假设池子中有一定比例的BNB
+        // 这是一个保守的估算，实际流动性可能更高
         
-        if (token0.toLowerCase() === config.WBNB_ADDRESS.toLowerCase()) {
-          liquidityInBNB = liquidityValue * Math.sqrt(price) / 1e18;
+        // V3的liquidity是一个抽象值，我们使用经验公式进行估算
+        // 对于大多数代币，liquidity值在百万到十亿之间对应合理的流动性
+        if (liquidityValue > 1e12) {
+          liquidityInBNB = liquidityValue / 1e15; // 高流动性池
+        } else if (liquidityValue > 1e9) {
+          liquidityInBNB = liquidityValue / 1e12; // 中等流动性池
+        } else if (liquidityValue > 1e6) {
+          liquidityInBNB = liquidityValue / 1e9;  // 低流动性池
         } else {
-          liquidityInBNB = liquidityValue / Math.sqrt(price) / 1e18;
+          liquidityInBNB = liquidityValue / 1e6;  // 极低流动性池
         }
+        
+        // 确保最小值
+        liquidityInBNB = Math.max(liquidityInBNB, 0.001);
       }
+      
+      console.log(`💧 估算流动性: ${liquidityInBNB.toFixed(6)} BNB (基于 liquidity=${liquidityValue})`);
       
       // 流动性判断标准（从配置读取）
       const tradeAmountNum = parseFloat(tradeAmount);
